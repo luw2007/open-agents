@@ -1,5 +1,6 @@
 import { Marked, type Tokens } from "marked";
 import chalk from "chalk";
+import { highlight } from "cli-highlight";
 
 // Ensure colors are enabled for TUI rendering
 chalk.level = 3;
@@ -8,8 +9,17 @@ const marked = new Marked({ async: false });
 
 marked.use({
   renderer: {
-    code({ text }: Tokens.Code): string {
-      return chalk.yellow(text) + "\n";
+    code({ text, lang }: Tokens.Code): string {
+      try {
+        const highlighted = highlight(text, {
+          language: lang || undefined,
+          ignoreIllegals: true,
+        });
+        return highlighted + "\n";
+      } catch {
+        // Fallback to plain yellow if highlighting fails
+        return chalk.yellow(text) + "\n";
+      }
     },
 
     blockquote(this: any, { tokens }: Tokens.Blockquote): string {
