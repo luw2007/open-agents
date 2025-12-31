@@ -14,3 +14,4 @@
 - [ ] add approved commands (auto approve for similar commands)
 - [ ] audit the input implementation (suggestions not working and missing chars)
 - [ ] support for pasting images
+- [ ] update system prompt to lean heavily on subagents
