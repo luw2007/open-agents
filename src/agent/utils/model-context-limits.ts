@@ -3,17 +3,10 @@
  * Used to display context usage percentage.
  */
 export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
-  // Anthropic Claude 4 models
-  "claude-opus-4": 200_000,
-  "claude-sonnet-4": 200_000,
-  "claude-haiku-4": 200_000,
-  // Anthropic Claude 3.5 models
-  "claude-3-5-sonnet": 200_000,
-  "claude-3-5-haiku": 200_000,
-  // Anthropic Claude 3 models
-  "claude-3-opus": 200_000,
-  "claude-3-sonnet": 200_000,
-  "claude-3-haiku": 200_000,
+  // Anthropic Claude 4.5 models
+  "claude-opus-4.5": 200_000,
+  "claude-sonnet-4.5": 200_000,
+  "claude-haiku-4.5": 200_000,
 };
 
 export const DEFAULT_CONTEXT_LIMIT = 200_000;
