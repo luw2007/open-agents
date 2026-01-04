@@ -1,4 +1,4 @@
-import type { AgentMode } from "../types";
+import type { AgentMode, AutoApprove } from "../types";
 
 /**
  * Mutable global state shared between prepareCall and tool approval functions.
@@ -15,7 +15,9 @@ import type { AgentMode } from "../types";
 export const sharedContext: {
   workingDirectory: string;
   mode: AgentMode;
+  autoApprove: AutoApprove;
 } = {
   workingDirectory: process.cwd(),
   mode: "interactive",
+  autoApprove: "off",
 };

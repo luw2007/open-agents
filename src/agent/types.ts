@@ -21,6 +21,15 @@ export type TodoItem = z.infer<typeof todoItemSchema>;
  */
 export type AgentMode = "interactive" | "background";
 
+/**
+ * Auto-approve settings for tool operations in interactive mode.
+ *
+ * - 'off': All destructive operations require manual approval (default)
+ * - 'edits': Auto-approve file edits and writes within working directory
+ * - 'all': Auto-approve all operations within working directory (edits + bash)
+ */
+export type AutoApprove = "off" | "edits" | "all";
+
 export interface AgentContext {
   sandbox: Sandbox;
   mode: AgentMode;
