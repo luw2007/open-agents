@@ -15,7 +15,7 @@ async function main() {
     console.log("Deep Agent CLI");
     console.log("");
     console.log("Usage:");
-    console.log("  deep-agent              Start interactive REPL");
+    console.log("  deep-agent              Start interactive TUI");
     console.log("  deep-agent <prompt>     Run a one-shot prompt");
     console.log("");
     console.log("Examples:");
