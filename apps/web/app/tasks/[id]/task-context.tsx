@@ -23,6 +23,8 @@ export type SandboxInfo = {
   createdAt: number;
   timeout: number;
   currentBranch?: string;
+  stateRestored?: boolean;
+  stateRestoreError?: string;
 };
 
 type DiffCacheState = {
@@ -39,6 +41,7 @@ type TaskChatContextValue = {
   sandboxInfo: SandboxInfo | null;
   setSandboxInfo: (info: SandboxInfo) => void;
   clearSandboxInfo: () => void;
+  setTaskSandboxId: (sandboxId: string) => void;
   archiveTask: () => Promise<void>;
   /** Whether the task had persisted messages when it was loaded */
   hadInitialMessages: boolean;
@@ -98,6 +101,10 @@ export function TaskChatProvider({
   const clearSandboxInfo = useCallback(() => {
     sandboxIdRef.current = null;
     setSandboxInfoState(null);
+  }, []);
+
+  const setTaskSandboxId = useCallback((sandboxId: string) => {
+    setTask((prev) => ({ ...prev, sandboxId }));
   }, []);
 
   const [diffRefreshKey, setDiffRefreshKey] = useState(0);
@@ -206,6 +213,7 @@ export function TaskChatProvider({
         sandboxInfo,
         setSandboxInfo,
         clearSandboxInfo,
+        setTaskSandboxId,
         archiveTask,
         hadInitialMessages,
         diffRefreshKey,

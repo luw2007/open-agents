@@ -21,6 +21,8 @@ export type SandboxInfo = {
   createdAt: number;
   timeout: number;
   currentBranch?: string;
+  stateRestored?: boolean;
+  stateRestoreError?: string;
 };
 
 export type RepoInfo = {
