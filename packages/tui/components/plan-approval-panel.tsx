@@ -1,18 +1,17 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import { useChat } from "@ai-sdk/react";
+import { readFile } from "fs/promises";
 import { useChatContext } from "../chat-context";
 import { renderMarkdown } from "../lib/markdown";
 
 export type PlanApprovalPanelProps = {
   approvalId: string;
-  plan: string | null;
   planFilePath: string;
 };
 
 export function PlanApprovalPanel({
   approvalId,
-  plan,
   planFilePath,
 }: PlanApprovalPanelProps) {
   const { chat } = useChatContext();
@@ -20,6 +19,14 @@ export function PlanApprovalPanel({
 
   const [selected, setSelected] = useState(0);
   const [feedback, setFeedback] = useState("");
+  const [plan, setPlan] = useState<string | null>(null);
+
+  // Read plan file content
+  useEffect(() => {
+    readFile(planFilePath, "utf-8")
+      .then((content) => setPlan(content))
+      .catch(() => setPlan(null));
+  }, [planFilePath]);
 
   // Reset state when approval request changes
   useEffect(() => {

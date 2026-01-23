@@ -36,7 +36,6 @@ import {
   extractExitPlanModeOutput,
   type TaskToolUIPart,
   type AskUserQuestionInput,
-  type ExitPlanModeOutput,
 } from "@open-harness/agent";
 
 type AppProps = {
@@ -613,7 +612,7 @@ function AppContent({ options }: AppProps) {
     }, [messages]);
 
   // Detect pending exit_plan_mode approval for custom plan approval panel
-  const { hasPendingPlanApproval, planApprovalId, planOutput } = useMemo(() => {
+  const { hasPendingPlanApproval, planApprovalId } = useMemo(() => {
     const lastMessage = messages[messages.length - 1];
     if (lastMessage?.role === "assistant") {
       for (const p of lastMessage.parts) {
@@ -623,11 +622,9 @@ function AppContent({ options }: AppProps) {
           p.state === "approval-requested"
         ) {
           const approval = (p as { approval?: { id: string } }).approval;
-          const output = p.output as ExitPlanModeOutput | undefined;
           return {
             hasPendingPlanApproval: true,
             planApprovalId: approval?.id ?? null,
-            planOutput: output,
           };
         }
       }
@@ -635,7 +632,6 @@ function AppContent({ options }: AppProps) {
     return {
       hasPendingPlanApproval: false,
       planApprovalId: null,
-      planOutput: null,
     };
   }, [messages]);
 
@@ -885,11 +881,10 @@ function AppContent({ options }: AppProps) {
       state.activePanel.type === "none" &&
         hasPendingPlanApproval &&
         planApprovalId &&
-        planOutput?.planFilePath ? (
+        state.planFilePath ? (
         <PlanApprovalPanel
           approvalId={planApprovalId}
-          plan={planOutput.plan}
-          planFilePath={planOutput.planFilePath}
+          planFilePath={state.planFilePath}
         />
       ) : /* Show approval panel when there's a pending approval (replaces status bar and input) */
       state.activePanel.type === "none" &&
