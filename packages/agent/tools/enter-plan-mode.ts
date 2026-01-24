@@ -5,6 +5,7 @@ import { generatePlanName } from "@open-harness/shared";
 import { getAgentContext } from "./utils";
 
 const enterPlanModeInputSchema = z.object({
+  // This input schema is here to stop anthropic streaming bug
   _: z.string().describe("Pass an empty string"),
 });
 
