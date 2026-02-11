@@ -512,6 +512,14 @@ export function SessionChatContent() {
     refreshChats,
   } = useSessionChats(session.id);
   const renderMessages = hasMounted ? messages : initialMessages;
+  const lastMessage = renderMessages[renderMessages.length - 1];
+  const showThinkingIndicator =
+    status === "submitted" ||
+    (status === "streaming" &&
+      lastMessage?.role === "assistant" &&
+      !lastMessage.parts.some(
+        (p) => (p.type === "text" && p.text.length > 0) || isToolUIPart(p),
+      ));
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingChatTitle, setEditingChatTitle] = useState("");
   const [isUpdatingModel, setIsUpdatingModel] = useState(false);
@@ -1839,6 +1847,13 @@ export function SessionChatContent() {
                     return null;
                   });
                 })}
+                {showThinkingIndicator && (
+                  <div className="flex justify-start">
+                    <p className="animate-pulse text-sm font-medium text-muted-foreground">
+                      Thinking...
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
