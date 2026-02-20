@@ -239,10 +239,7 @@ EXAMPLES:
         }
 
         try {
-          const { commandId } = await sandbox.execDetached(
-            command,
-            workingDir,
-          );
+          const { commandId } = await sandbox.execDetached(command, workingDir);
           return {
             success: true,
             exitCode: null,
@@ -254,8 +251,7 @@ EXAMPLES:
             success: false,
             exitCode: null,
             stdout: "",
-            stderr:
-              error instanceof Error ? error.message : String(error),
+            stderr: error instanceof Error ? error.message : String(error),
           };
         }
       }
