@@ -199,8 +199,20 @@ export class VercelSandbox implements Sandbox {
   }
 
   get environmentDetails(): string {
-    const portLines = this._ports?.length
-      ? `\n- Dev server preview URLs (start a server on one of these ports, then share the URL with the user):\n${this._ports.map((p) => `  - Port ${p}: ${this.domain(p)}`).join("\n")}`
+    const portPreviewLines =
+      this._ports
+        ?.map((port) => {
+          try {
+            const url = this.domain(port);
+            return `  - Port ${port}: ${url}`;
+          } catch {
+            return undefined;
+          }
+        })
+        .filter((line): line is string => line !== undefined) ?? [];
+
+    const portLines = portPreviewLines.length
+      ? `\n- Dev server preview URLs (start a server on one of these ports, then share the URL with the user):\n${portPreviewLines.join("\n")}`
       : "";
 
     return `- Ephemeral sandbox - all work is lost unless committed and pushed to git
