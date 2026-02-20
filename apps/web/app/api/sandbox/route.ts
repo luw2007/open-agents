@@ -9,7 +9,10 @@ import { parseGitHubUrl } from "@/lib/github/client";
 import { getRepoToken } from "@/lib/github/get-repo-token";
 import { downloadAndExtractTarball } from "@/lib/github/tarball";
 import { getUserGitHubToken } from "@/lib/github/user-token";
-import { DEFAULT_SANDBOX_TIMEOUT_MS } from "@/lib/sandbox/config";
+import {
+  DEFAULT_SANDBOX_TIMEOUT_MS,
+  DEFAULT_SANDBOX_PORTS,
+} from "@/lib/sandbox/config";
 import {
   buildActiveLifecycleUpdate,
   getNextLifecycleVersion,
@@ -118,7 +121,7 @@ export async function POST(req: Request) {
   if (providedSandboxId) {
     const sandbox = await connectSandbox({
       state: { type: "hybrid", sandboxId: providedSandboxId },
-      options: { env },
+      options: { env, ports: DEFAULT_SANDBOX_PORTS },
     });
 
     if (sessionId && sandbox.getState) {
@@ -205,6 +208,7 @@ export async function POST(req: Request) {
         env,
         gitUser,
         timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
+        ports: DEFAULT_SANDBOX_PORTS,
       },
     });
   } else {
@@ -220,6 +224,7 @@ export async function POST(req: Request) {
         env,
         gitUser,
         timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
+        ports: DEFAULT_SANDBOX_PORTS,
         scheduleBackgroundWork: (cb) => after(cb),
         hooks: sessionId
           ? {

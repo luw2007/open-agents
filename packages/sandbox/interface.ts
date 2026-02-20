@@ -212,6 +212,26 @@ export interface Sandbox {
   exec(command: string, cwd: string, timeoutMs: number): Promise<ExecResult>;
 
   /**
+   * Execute a shell command in detached mode (returns immediately).
+   * The command continues running in the background.
+   * Only supported by cloud sandboxes (Vercel).
+   *
+   * @param command - The command to execute
+   * @param cwd - Working directory for the command
+   * @returns The command ID that can be used to check status or kill the process
+   */
+  execDetached?(command: string, cwd: string): Promise<{ commandId: string }>;
+
+  /**
+   * Get the public URL for an exposed port.
+   * Only available on cloud sandboxes with ports declared at creation time.
+   * Returns the full URL (e.g., "https://abc123-3000.vercel.run").
+   *
+   * @param port - The port number (must have been declared in `ports` at creation)
+   */
+  domain?(port: number): string;
+
+  /**
    * Stop and clean up the sandbox.
    * For local sandboxes, this is a no-op.
    * For remote sandboxes, this releases resources.

@@ -17,6 +17,12 @@ const bashInputSchema = z.object({
     .string()
     .optional()
     .describe("Working directory for the command (absolute path)"),
+  detached: z
+    .boolean()
+    .optional()
+    .describe(
+      "Use this whenever you want to run a persistent server in the background (e.g., npm run dev, next dev). The command starts and returns immediately without waiting for it to finish.",
+    ),
 });
 
 type BashInput = z.infer<typeof bashInputSchema>;
@@ -182,7 +188,7 @@ WHEN NOT TO USE:
 - Reading files (use readFileTool instead)
 - Editing or creating files (use editFileTool or writeFileTool instead)
 - Searching code or text (use grepTool and/or globTool instead)
-- Interactive commands (shells, editors, REPLs) or long-lived daemons
+- Interactive commands (shells, editors, REPLs)
 
 USAGE:
 - Runs bash -c "<command>" in a non-interactive shell (no TTY/PTY)
@@ -199,16 +205,17 @@ DO NOT USE FOR:
 IMPORTANT:
 - Never chain commands with ';' or '&&' - use separate tool calls for each logical step
 - Never use interactive commands (vim, nano, top, bash, ssh, etc.)
-- Never start background processes with '&'
 - Always quote file paths that may contain spaces
 - Setting cwd to a path outside the working directory requires approval
+- Use detached: true to start dev servers or other long-running processes in the background
 
 EXAMPLES:
 - Run the test suite: command: "npm test", cwd: "/Users/username/project"
 - Check git status: command: "git status --short"
-- List files in src: command: "ls -la", cwd: "/Users/username/project/src"`,
+- List files in src: command: "ls -la", cwd: "/Users/username/project/src"
+- Start a dev server: command: "npm run dev", detached: true`,
     inputSchema: bashInputSchema,
-    execute: async ({ command, cwd }, { experimental_context }) => {
+    execute: async ({ command, cwd, detached }, { experimental_context }) => {
       const sandbox = getSandbox(experimental_context, "bash");
       const workingDirectory = sandbox.workingDirectory;
 
@@ -218,6 +225,40 @@ EXAMPLES:
           ? cwd
           : path.resolve(workingDirectory, cwd)
         : workingDirectory;
+
+      // Detached mode: start the command in the background and return immediately
+      if (detached) {
+        if (!sandbox.execDetached) {
+          return {
+            success: false,
+            exitCode: null,
+            stdout: "",
+            stderr:
+              "Detached mode is not supported in this sandbox environment. Only cloud sandboxes support background processes.",
+          };
+        }
+
+        try {
+          const { commandId } = await sandbox.execDetached(
+            command,
+            workingDir,
+          );
+          return {
+            success: true,
+            exitCode: null,
+            stdout: `Process started in background (command ID: ${commandId}). The server is now running.`,
+            stderr: "",
+          };
+        } catch (error) {
+          return {
+            success: false,
+            exitCode: null,
+            stdout: "",
+            stderr:
+              error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
 
       const result = await sandbox.exec(command, workingDir, TIMEOUT_MS);
 

@@ -20,3 +20,13 @@ export const SANDBOX_LIFECYCLE_STALE_RUN_GRACE_MS = 2 * 60 * 1000;
 
 /** Minimum sleep between lifecycle workflow loop iterations (5 seconds) */
 export const SANDBOX_LIFECYCLE_MIN_SLEEP_MS = 5 * 1000;
+
+/**
+ * Default ports to expose from cloud sandboxes for dev server previews.
+ * Limited to 4 ports. Covers the most common framework defaults:
+ * - 3000: Next.js, Express, Remix
+ * - 5173: Vite, SvelteKit
+ * - 4321: Astro
+ * - 8080: Generic / custom servers
+ */
+export const DEFAULT_SANDBOX_PORTS = [3000, 5173, 4321, 8080];

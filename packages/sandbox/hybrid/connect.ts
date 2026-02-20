@@ -20,6 +20,8 @@ export interface HybridConnectOptions {
   hooks?: HybridHooks;
   /** Timeout in milliseconds for cloud sandboxes (default: 300,000 = 5 minutes) */
   timeout?: number;
+  /** Ports to expose from the sandbox for dev server preview URLs */
+  ports?: number[];
   /**
    * Schedule background work for cloud sandbox startup.
    * The callback returns a promise that completes when cloud sandbox is ready.
@@ -68,6 +70,7 @@ function startCloudSandboxInBackground(
         gitUser: options?.gitUser,
         hooks: options?.hooks,
         timeout: options?.timeout,
+        ports: options?.ports,
       });
 
       // Perform handoff
@@ -115,6 +118,7 @@ export async function connectHybrid(
       {
         env: options?.env,
         hooks: options?.hooks,
+        ports: options?.ports,
       },
     );
 
@@ -134,12 +138,14 @@ export async function connectHybrid(
     const sdk = await VercelSandboxSDK.create({
       source: { type: "snapshot", snapshotId: state.snapshotId },
       ...(options?.timeout !== undefined && { timeout: options.timeout }),
+      ...(options?.ports && { ports: options.ports }),
     });
 
     const cloudSandbox = await VercelSandbox.connect(sdk.sandboxId, {
       env: options?.env,
       hooks: options?.hooks,
       remainingTimeout: options?.timeout,
+      ports: options?.ports,
     });
 
     // Configure git user if provided (not done automatically when restoring from snapshot)
@@ -165,6 +171,7 @@ export async function connectHybrid(
       {
         env: options?.env,
         hooks: options?.hooks,
+        ports: options?.ports,
       },
     );
 

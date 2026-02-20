@@ -31,6 +31,8 @@ export interface ConnectOptions {
   hooks?: SandboxHooks;
   /** Timeout in milliseconds for cloud sandboxes (default: 300,000 = 5 minutes) */
   timeout?: number;
+  /** Ports to expose from the sandbox for dev server preview URLs */
+  ports?: number[];
 }
 
 /**
@@ -43,6 +45,8 @@ export interface HybridConnectOptions extends Omit<ConnectOptions, "hooks"> {
   gitUser?: { name: string; email: string };
   /** Lifecycle hooks including hybrid-specific hooks */
   hooks?: HybridHooks;
+  /** Ports to expose from the sandbox for dev server preview URLs */
+  ports?: number[];
   /**
    * Schedule background work for cloud sandbox startup.
    * Wire to your runtime's background task mechanism.

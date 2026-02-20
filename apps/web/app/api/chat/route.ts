@@ -6,6 +6,7 @@ import {
   sumLanguageModelUsage,
 } from "@open-harness/agent";
 import { connectSandbox, type SandboxState } from "@open-harness/sandbox";
+import { DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
 import {
   convertToModelMessages,
   type GatewayModelId,
@@ -171,6 +172,7 @@ export async function POST(req: Request) {
   // Connect sandbox (handles all modes, handoff, restoration)
   const sandbox = await connectSandbox(sessionRecord.sandboxState, {
     env: githubToken ? { GITHUB_TOKEN: githubToken } : undefined,
+    ports: DEFAULT_SANDBOX_PORTS,
   });
 
   if (githubToken && sessionRecord.repoOwner && sessionRecord.repoName) {

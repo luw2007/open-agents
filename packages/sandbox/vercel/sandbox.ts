@@ -43,6 +43,7 @@ export class VercelSandbox implements Sandbox {
   private isStopped = false;
   private _expiresAt?: number;
   private _timeout?: number;
+  private _ports?: number[];
 
   /**
    * Timestamp (ms since epoch) when this sandbox will be proactively stopped.
@@ -70,6 +71,7 @@ export class VercelSandbox implements Sandbox {
     hooks?: SandboxHooks,
     timeout?: number,
     startTime?: number,
+    ports?: number[],
   ) {
     this.sdk = sdk;
     this.id = id;
@@ -77,6 +79,7 @@ export class VercelSandbox implements Sandbox {
     this.env = env;
     this.currentBranch = currentBranch;
     this.hooks = hooks;
+    this._ports = ports;
 
     // Set timeout tracking for proactive stop
     if (timeout !== undefined && startTime !== undefined) {
@@ -196,6 +199,10 @@ export class VercelSandbox implements Sandbox {
   }
 
   get environmentDetails(): string {
+    const portLines = this._ports?.length
+      ? `\n- Dev server preview URLs (start a server on one of these ports, then share the URL with the user):\n${this._ports.map((p) => `  - Port ${p}: ${this.domain(p)}`).join("\n")}`
+      : "";
+
     return `- Ephemeral sandbox - all work is lost unless committed and pushed to git
 - Default workflow: create a new branch, commit changes, push, and open a PR (since the sandbox is ephemeral, this ensures work is preserved)
 - Git is already configured (user, email, remote auth) - no setup or verification needed
@@ -204,7 +211,7 @@ export class VercelSandbox implements Sandbox {
   curl -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/OWNER/REPO/pulls -d '{"title":"...","head":"branch","base":"main","body":"..."}'
 - Node.js runtime with npm/pnpm available
 - Installing Bun: run \`curl -fsSL https://bun.com/install | bash\`, then \`echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc\`, then verify with \`bun --version\`
-- Sandbox host: ${this.host} (use domain(port) method to get URLs for exposed ports)`;
+- Sandbox host: ${this.host}${portLines}`;
   }
 
   /**
@@ -350,6 +357,7 @@ export class VercelSandbox implements Sandbox {
       hooks,
       effectiveTimeout,
       startTime,
+      ports,
     );
 
     // Call afterStart hook if provided
@@ -374,6 +382,8 @@ export class VercelSandbox implements Sandbox {
        * This ensures timeout tracking and proactive stop work correctly.
        */
       remainingTimeout?: number;
+      /** Ports that were declared at creation time (for preview URL display) */
+      ports?: number[];
     } = {},
   ): Promise<VercelSandbox> {
     const sdk = await VercelSandboxSDK.get({ sandboxId });
@@ -394,6 +404,7 @@ export class VercelSandbox implements Sandbox {
       options.hooks,
       remainingTimeout,
       startTime,
+      options.ports,
     );
 
     // Call afterStart hook if provided (useful for reconnection setup)
@@ -591,6 +602,24 @@ export class VercelSandbox implements Sandbox {
         truncated: false,
       };
     }
+  }
+
+  /**
+   * Execute a command in detached mode (returns immediately).
+   * The command continues running in the background.
+   */
+  async execDetached(
+    command: string,
+    cwd: string,
+  ): Promise<{ commandId: string }> {
+    const result = await this.sdk.runCommand({
+      cmd: "bash",
+      args: ["-c", `cd "${cwd}" && ${command}`],
+      env: this.env,
+      detached: true,
+    });
+
+    return { commandId: result.cmdId };
   }
 
   /**

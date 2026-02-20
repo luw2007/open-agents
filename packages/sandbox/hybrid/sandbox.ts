@@ -276,6 +276,35 @@ export class HybridSandbox implements Sandbox {
   }
 
   /**
+   * Execute a command in detached mode.
+   * Delegates to the Vercel sandbox after handoff; unavailable before.
+   */
+  async execDetached(
+    command: string,
+    cwd: string,
+  ): Promise<{ commandId: string }> {
+    if (this.state === "vercel" && this.vercel?.execDetached) {
+      return this.vercel.execDetached(command, cwd);
+    }
+    throw new Error(
+      "Detached commands are only available after cloud sandbox is ready",
+    );
+  }
+
+  /**
+   * Get the public URL for an exposed port.
+   * Delegates to the Vercel sandbox after handoff; unavailable before.
+   */
+  domain(port: number): string {
+    if (this.state === "vercel" && this.vercel?.domain) {
+      return this.vercel.domain(port);
+    }
+    throw new Error(
+      "Preview URLs are only available after cloud sandbox is ready",
+    );
+  }
+
+  /**
    * Stop the current sandbox.
    */
   async stop(): Promise<void> {

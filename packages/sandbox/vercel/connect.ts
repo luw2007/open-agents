@@ -9,6 +9,7 @@ interface ConnectOptions {
   gitUser?: { name: string; email: string };
   hooks?: SandboxHooks;
   timeout?: number;
+  ports?: number[];
 }
 
 /**
@@ -40,6 +41,7 @@ export async function connectVercel(
       env: options?.env,
       hooks: options?.hooks,
       remainingTimeout,
+      ports: options?.ports,
     });
   }
 
@@ -48,6 +50,7 @@ export async function connectVercel(
     const sdk = await VercelSandboxSDK.create({
       source: { type: "snapshot", snapshotId: state.snapshotId },
       ...(options?.timeout !== undefined && { timeout: options.timeout }),
+      ...(options?.ports && { ports: options.ports }),
     });
 
     // Wrap in VercelSandbox - use connect since SDK is already created
@@ -56,6 +59,7 @@ export async function connectVercel(
       env: options?.env,
       hooks: options?.hooks,
       remainingTimeout: options?.timeout,
+      ports: options?.ports,
     });
 
     // Configure git user if provided (not done automatically when restoring from snapshot)
@@ -78,6 +82,7 @@ export async function connectVercel(
       gitUser: options?.gitUser,
       hooks: options?.hooks,
       ...(options?.timeout !== undefined && { timeout: options.timeout }),
+      ...(options?.ports && { ports: options.ports }),
     });
   }
 
@@ -87,5 +92,6 @@ export async function connectVercel(
     gitUser: options?.gitUser,
     hooks: options?.hooks,
     ...(options?.timeout !== undefined && { timeout: options.timeout }),
+    ...(options?.ports && { ports: options.ports }),
   });
 }
