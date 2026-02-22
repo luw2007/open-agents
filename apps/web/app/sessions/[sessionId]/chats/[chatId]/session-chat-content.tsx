@@ -2243,6 +2243,12 @@ export function SessionChatContent() {
                           <Button
                             type="submit"
                             size="icon"
+                            onTouchEnd={() => {
+                              // On iOS, tapping submit while the textarea is focused
+                              // causes the keyboard to briefly flash open then closed.
+                              // Blur the textarea immediately to prevent this.
+                              inputRef.current?.blur();
+                            }}
                             disabled={
                               isArchived ||
                               (!input.trim() && images.length === 0) ||
