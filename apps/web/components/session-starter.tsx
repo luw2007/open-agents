@@ -1,8 +1,9 @@
 "use client";
 
-import { GitBranch, Plus, X } from "lucide-react";
+import { GitBranch, Loader2, Mic, Plus, X } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useAudioRecording } from "@/hooks/use-audio-recording";
 import { useUserPreferences } from "@/hooks/use-user-preferences";
 import { cn } from "@/lib/utils";
 import { BranchSelectorCompact } from "./branch-selector-compact";
@@ -44,7 +45,14 @@ export function SessionStarter({
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [isNewBranch, setIsNewBranch] = useState(!!lastRepo);
   const [initialPrompt, setInitialPrompt] = useState("");
+  const initialPromptRef = useRef<HTMLTextAreaElement>(null);
 
+  const {
+    state: recordingState,
+    error: recordingError,
+    clearError: clearRecordingError,
+    toggleRecording,
+  } = useAudioRecording();
   const { preferences } = useUserPreferences();
 
   const sandboxType = preferences?.defaultSandboxType ?? DEFAULT_SANDBOX_TYPE;
@@ -74,6 +82,17 @@ export function SessionStarter({
     setMode(newMode);
     if (newMode === "empty") {
       handleRepoClear();
+    }
+  };
+
+  const handleMicClick = async () => {
+    clearRecordingError();
+    const transcribedText = await toggleRecording();
+    if (transcribedText) {
+      setInitialPrompt((previous) =>
+        previous ? `${previous} ${transcribedText}` : transcribedText,
+      );
+      initialPromptRef.current?.focus();
     }
   };
 
@@ -190,13 +209,38 @@ export function SessionStarter({
         )}
 
         <div className="space-y-2">
-          <label
-            htmlFor="initial-prompt"
-            className="block text-xs font-medium text-neutral-400"
-          >
-            Initial prompt (optional)
-          </label>
+          <div className="flex items-center justify-between gap-3">
+            <label
+              htmlFor="initial-prompt"
+              className="block text-xs font-medium text-neutral-400"
+            >
+              Initial prompt (optional)
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                void handleMicClick();
+              }}
+              disabled={isLoading || recordingState === "processing"}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md border border-white/10 px-2 py-1 text-xs transition-colors",
+                recordingState === "recording"
+                  ? "text-red-400 hover:bg-red-500/10"
+                  : "text-neutral-400 hover:bg-white/[0.06] hover:text-neutral-200",
+              )}
+            >
+              {recordingState === "processing" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Mic className="h-3.5 w-3.5" />
+              )}
+              <span>
+                {recordingState === "recording" ? "Stop" : "Transcribe"}
+              </span>
+            </button>
+          </div>
           <textarea
+            ref={initialPromptRef}
             id="initial-prompt"
             value={initialPrompt}
             onChange={(e) => setInitialPrompt(e.currentTarget.value)}
@@ -208,6 +252,9 @@ export function SessionStarter({
             When provided, we'll start the sandbox and run this prompt in the
             background.
           </p>
+          {recordingError && (
+            <p className="text-xs text-destructive">{recordingError}</p>
+          )}
         </div>
 
         <button
