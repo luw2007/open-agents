@@ -24,7 +24,7 @@ import {
   X,
 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -657,7 +657,6 @@ function ShareDialog({
 
 export function SessionChatContent({ initialModels }: SessionChatContentProps) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [input, setInput] = useState("");
   const [isCreatingSandbox, setIsCreatingSandbox] = useState(false);
   const [isRestoringSnapshot, setIsRestoringSnapshot] = useState(false);
@@ -678,26 +677,6 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
       isMountedRef.current = false;
     };
   }, []);
-
-  // Pre-fill input from ?prompt= query param (e.g. sent from inbox)
-  const promptConsumedRef = useRef(false);
-  useEffect(() => {
-    if (promptConsumedRef.current) return;
-    const prompt = searchParams.get("prompt");
-    if (prompt) {
-      promptConsumedRef.current = true;
-      setInput(prompt);
-      // Clean the URL without navigation
-      const url = new URL(window.location.href);
-      url.searchParams.delete("prompt");
-      router.replace(url.pathname + url.search, { scroll: false });
-      // Focus the input so user can just hit Enter
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-      });
-    }
-  }, [searchParams, router]);
-
   const {
     state: recordingState,
     error: recordingError,

@@ -8,29 +8,30 @@ import type {
 } from "@/app/api/inbox/route";
 import { DiffsProvider } from "@/components/diffs-provider";
 import { useInbox } from "@/hooks/use-inbox";
+import { useInboxMessages } from "@/hooks/use-inbox-messages";
 import { useSession } from "@/hooks/use-session";
 import { defaultDiffOptions } from "@/lib/diffs-config";
 import { streamdownPlugins } from "@/lib/streamdown-config";
 import { cn } from "@/lib/utils";
 import { PatchDiff } from "@pierre/diffs/react";
 import {
+  AlertCircle,
   ArrowLeft,
   ArrowUp,
-  CheckSquare,
   ChevronDown,
   ChevronRight,
-  Circle,
   ExternalLink,
   Eye,
   FileText,
+  GitCompare,
   GitPullRequest,
   Loader2,
   MessageSquareWarning,
-  Square,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { nanoid } from "nanoid";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "streamdown/styles.css";
 
@@ -47,6 +48,8 @@ const FILTER_LABELS: Record<FilterTab, string> = {
   needs_review: "Needs review",
   working: "Working",
 };
+
+// -- Shared components --
 
 function AttentionBadge({ state }: { state: AttentionState }) {
   switch (state) {
@@ -330,7 +333,7 @@ function InlineDiffViewer({ diff }: { diff: InboxDiff }) {
   );
 }
 
-// -- Inbox item components --
+// -- Inbox item list row --
 
 function InboxItemRow({
   item,
@@ -386,28 +389,36 @@ function InboxItemRow({
   );
 }
 
+// -- Detail panel: email-style thread view --
+
 function InboxItemDetail({
   item,
   onNavigate,
+  onSent,
 }: {
   item: InboxItem;
   onNavigate: () => void;
+  onSent: () => void;
 }) {
-  const router = useRouter();
+  const {
+    thread,
+    rawMessages,
+    refresh: refreshMessages,
+  } = useInboxMessages(item.chatId);
   const [replyText, setReplyText] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [showDiff, setShowDiff] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const threadEndRef = useRef<HTMLDivElement>(null);
 
-  const handleSubmitReply = useCallback(() => {
-    const trimmed = replyText.trim();
-    if (!trimmed || !item.chatId) return;
-
-    // Navigate to the session chat with the prompt pre-filled.
-    // The chat page will pick this up and auto-send it.
-    const params = new URLSearchParams({ prompt: trimmed });
-    router.push(
-      `/sessions/${item.sessionId}/chats/${item.chatId}?${params.toString()}`,
-    );
-  }, [replyText, item.sessionId, item.chatId, router]);
+  // Reset reply state when switching items
+  useEffect(() => {
+    setReplyText("");
+    setIsSending(false);
+    setSendError(null);
+    setShowDiff(false);
+  }, [item.sessionId]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -418,124 +429,221 @@ function InboxItemDetail({
     textarea.style.height = `${newHeight}px`;
   }, [replyText]);
 
+  // Scroll to bottom when thread updates
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [thread.length]);
+
+  const handleSendReply = useCallback(async () => {
+    const trimmed = replyText.trim();
+    if (!trimmed || !item.chatId || isSending) return;
+
+    setIsSending(true);
+    setSendError(null);
+
+    try {
+      // Build the new user message in AI SDK UIMessage format
+      const newUserMessage = {
+        id: nanoid(),
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: trimmed }],
+      };
+
+      // Append to existing raw messages and POST to the chat API
+      const allMessages = [...rawMessages, newUserMessage];
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: allMessages,
+          sessionId: item.sessionId,
+          chatId: item.chatId,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        const errorMsg =
+          data?.error === "Sandbox not initialized"
+            ? "Sandbox is hibernated. Open the session to wake it up."
+            : (data?.error ?? `Failed to send (${res.status})`);
+        setSendError(errorMsg);
+        setIsSending(false);
+        return;
+      }
+
+      // Fire and forget — we don't need to consume the stream.
+      // The server will process the message and update the session state.
+      // We intentionally do NOT await the response body.
+      setReplyText("");
+      setIsSending(false);
+
+      // Refresh messages and signal the parent to refresh inbox
+      refreshMessages();
+      onSent();
+    } catch {
+      setSendError("Network error. Please try again.");
+      setIsSending(false);
+    }
+  }, [
+    replyText,
+    item.chatId,
+    item.sessionId,
+    isSending,
+    rawMessages,
+    refreshMessages,
+    onSent,
+  ]);
+
+  const hasDiff =
+    item.cachedDiff &&
+    item.cachedDiff.files &&
+    item.cachedDiff.files.length > 0;
+
   return (
     <div className="flex h-full flex-col">
-      {/* Detail header */}
-      <div className="border-b border-border px-6 py-4">
+      {/* Detail header with session actions */}
+      <div className="shrink-0 border-b border-border px-6 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <AttentionBadge state={item.attentionState} />
-            <h2 className="text-lg font-semibold">{item.sessionTitle}</h2>
+            <h2 className="text-base font-semibold">{item.sessionTitle}</h2>
+            {item.repoName ? (
+              <>
+                <span className="text-muted-foreground">·</span>
+                <span className="text-sm text-muted-foreground">
+                  {item.repoOwner}/{item.repoName}
+                </span>
+              </>
+            ) : null}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            {/* Diff toggle */}
+            {hasDiff ? (
+              <button
+                type="button"
+                onClick={() => setShowDiff(!showDiff)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+                  showDiff
+                    ? "border-blue-500/30 bg-blue-500/10 text-blue-500"
+                    : "border-border text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <GitCompare className="h-3.5 w-3.5" />
+                Changes
+                <DiffStats
+                  added={item.linesAdded}
+                  removed={item.linesRemoved}
+                />
+              </button>
+            ) : null}
+            {/* PR link */}
             {item.prNumber && item.repoOwner && item.repoName ? (
               <Link
                 href={`https://github.com/${item.repoOwner}/${item.repoName}/pull/${item.prNumber}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
               >
-                <GitPullRequest className="h-4 w-4" />
+                <GitPullRequest className="h-3.5 w-3.5" />
                 PR #{item.prNumber}
-                <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                <ExternalLink className="h-3 w-3" />
               </Link>
             ) : null}
+            {/* Open session */}
             <button
               type="button"
               onClick={onNavigate}
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
             >
               Open session
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
-        {item.repoName ? (
-          <p className="mt-1 text-sm text-muted-foreground">
-            {item.repoOwner}/{item.repoName}
-          </p>
-        ) : null}
       </div>
 
-      {/* Detail body */}
-      <div className="flex-1 overflow-y-auto px-6 py-5">
-        <div className="space-y-6">
-          {/* Objective */}
-          {item.objective ? (
-            <div>
-              <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Objective
-              </h3>
-              <p className="text-sm leading-relaxed text-foreground">
-                {item.objective}
-              </p>
-            </div>
-          ) : null}
-
-          {/* Status / Todos */}
-          {item.latestTodos && item.latestTodos.length > 0 ? (
-            <div>
-              <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Progress
-              </h3>
-              <div className="space-y-1.5">
-                {item.latestTodos.map((todo) => (
-                  <div key={todo.id} className="flex items-center gap-2">
-                    {todo.status === "completed" ? (
-                      <CheckSquare className="h-4 w-4 shrink-0 text-green-500" />
-                    ) : todo.status === "in_progress" ? (
-                      <Circle className="h-4 w-4 shrink-0 fill-amber-500 text-amber-500" />
+      {/* Main content area — either thread or diff */}
+      <div className="flex min-h-0 flex-1">
+        {/* Thread view */}
+        <div
+          className={cn(
+            "flex-1 overflow-y-auto",
+            showDiff && hasDiff ? "border-r border-border" : "",
+          )}
+        >
+          <div className="mx-auto max-w-2xl px-6 py-5">
+            {thread.length === 0 ? (
+              <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+                No messages yet
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {thread.map((msg) => (
+                  <div key={msg.id}>
+                    {msg.role === "user" ? (
+                      <div>
+                        <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                          You
+                        </div>
+                        <div className="rounded-lg bg-primary/5 px-4 py-3">
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                            {msg.text}
+                          </p>
+                        </div>
+                      </div>
                     ) : (
-                      <Square className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div>
+                        <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                          Agent
+                        </div>
+                        <div className="min-w-0 overflow-hidden pl-0.5">
+                          <Streamdown
+                            mode="static"
+                            isAnimating={false}
+                            plugins={streamdownPlugins}
+                          >
+                            {msg.text}
+                          </Streamdown>
+                        </div>
+                      </div>
                     )}
-                    <span
-                      className={cn(
-                        "text-sm",
-                        todo.status === "completed"
-                          ? "text-muted-foreground line-through"
-                          : todo.status === "in_progress"
-                            ? "text-amber-500"
-                            : "text-foreground",
-                      )}
-                    >
-                      {todo.content}
-                    </span>
                   </div>
                 ))}
+                <div ref={threadEndRef} />
               </div>
-            </div>
-          ) : null}
-
-          {/* Agent response rendered with Streamdown */}
-          {item.latestResponse ? (
-            <div>
-              <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Agent response
-              </h3>
-              <div className="min-w-0 overflow-hidden">
-                <Streamdown
-                  mode="static"
-                  isAnimating={false}
-                  plugins={streamdownPlugins}
-                >
-                  {item.latestResponse}
-                </Streamdown>
-              </div>
-            </div>
-          ) : null}
-
-          {/* Diff viewer (collapsed by default) */}
-          {item.cachedDiff &&
-          item.cachedDiff.files &&
-          item.cachedDiff.files.length > 0 ? (
-            <InlineDiffViewer diff={item.cachedDiff} />
-          ) : null}
+            )}
+          </div>
         </div>
+
+        {/* Diff panel (side-by-side when open) */}
+        {showDiff && hasDiff && item.cachedDiff ? (
+          <div className="w-[50%] shrink-0 overflow-y-auto">
+            <div className="p-4">
+              <InlineDiffViewer diff={item.cachedDiff} />
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Reply input */}
       {item.chatId ? (
         <div className="shrink-0 border-t border-border px-6 py-3">
+          {sendError ? (
+            <div className="mb-2 flex items-center gap-2 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-400">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              {sendError}
+              <button
+                type="button"
+                onClick={() => setSendError(null)}
+                className="ml-auto text-red-400/70 hover:text-red-400"
+              >
+                Dismiss
+              </button>
+            </div>
+          ) : null}
           <div className="relative flex items-end gap-2">
             <textarea
               ref={textareaRef}
@@ -544,34 +652,34 @@ function InboxItemDetail({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  handleSubmitReply();
+                  handleSendReply();
                 }
               }}
               placeholder="Reply to this session..."
               rows={1}
-              className="min-h-[38px] flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              disabled={isSending}
+              className="min-h-[38px] flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
             />
             <button
               type="button"
-              onClick={handleSubmitReply}
-              disabled={!replyText.trim()}
+              onClick={handleSendReply}
+              disabled={!replyText.trim() || isSending}
               className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40 disabled:hover:bg-primary"
             >
-              <ArrowUp className="h-4 w-4" />
+              {isSending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ArrowUp className="h-4 w-4" />
+              )}
             </button>
           </div>
-          <p className="mt-1.5 text-xs text-muted-foreground/60">
-            Sends you to the session with your message.{" "}
-            <kbd className="rounded border border-border px-1 py-0.5 font-mono text-[10px]">
-              ↵
-            </kbd>{" "}
-            to send
-          </p>
         </div>
       ) : null}
     </div>
   );
 }
+
+// -- Supporting components --
 
 function InboxSkeleton() {
   return (
@@ -621,6 +729,8 @@ function EmptyInbox({ filter }: { filter: FilterTab }) {
   );
 }
 
+// -- Main inbox view --
+
 export function InboxView() {
   const router = useRouter();
   const { isAuthenticated, loading: sessionLoading } = useSession();
@@ -631,6 +741,7 @@ export function InboxView() {
     needsInputCount,
     needsReviewCount,
     workingCount,
+    refresh: refreshInbox,
   } = useInbox({ enabled: isAuthenticated });
   const [filter, setFilter] = useState<FilterTab>("all");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -654,6 +765,15 @@ export function InboxView() {
     },
     [router],
   );
+
+  // After sending a reply, refresh the inbox. The item will move to "Working"
+  // and (if filtered) disappear from the current view, advancing to the next.
+  const handleSent = useCallback(() => {
+    // Small delay to let the server catch up
+    setTimeout(() => {
+      refreshInbox();
+    }, 1500);
+  }, [refreshInbox]);
 
   // Keyboard navigation (j/k or arrow keys, enter to open)
   useEffect(() => {
@@ -799,6 +919,7 @@ export function InboxView() {
               <InboxItemDetail
                 item={selectedItem}
                 onNavigate={() => navigateToSession(selectedItem.sessionId)}
+                onSent={handleSent}
               />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
