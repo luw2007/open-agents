@@ -104,12 +104,17 @@ export default async function SessionChatPage({
     notFound();
   }
   const initialMessages = dbMessages.map((m) => m.parts as WebAgentUIMessage);
+  const messageTimestamps: Record<string, number> = {};
+  for (const m of dbMessages) {
+    messageTimestamps[m.id] = new Date(m.createdAt).getTime();
+  }
   return (
     <DiffsProvider>
       <SessionChatProvider
         session={sessionRecord}
         chat={chat}
         initialMessages={initialMessages}
+        messageTimestamps={messageTimestamps}
       >
         <SessionChatContent initialModels={initialModels} />
       </SessionChatProvider>

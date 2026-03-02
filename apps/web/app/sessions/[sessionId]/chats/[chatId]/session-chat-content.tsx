@@ -786,6 +786,7 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
     updateSessionRepo,
     updateSessionPullRequest,
     checkBranchAndPr,
+    messageTimestamps,
   } = useSessionChatContext();
   const { messages, error, sendMessage, status, addToolOutput } = chat;
   const {
@@ -896,16 +897,21 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
     return isChatInFlightStatus(effectiveStatus);
   }, [effectiveStatus, hasPendingResponse, isChatInFlight]);
 
-  // Track when the agent started working for the elapsed timer
-  const workingStartedAtRef = useRef<number>(0);
-  useEffect(() => {
-    if (showThinkingIndicator && workingStartedAtRef.current === 0) {
-      workingStartedAtRef.current = Date.now();
+  // Compute when the agent started working using persisted message timestamps.
+  // Find the last user message's createdAt — this persists across navigation.
+  // Falls back to Date.now() for optimistic / not-yet-persisted messages.
+  const workingStartedAt = useMemo(() => {
+    if (!showThinkingIndicator) return 0;
+    // Walk backwards to find the last user message
+    for (let i = renderMessages.length - 1; i >= 0; i--) {
+      const msg = renderMessages[i];
+      if (msg.role === "user") {
+        const ts = messageTimestamps[msg.id];
+        if (ts) return ts;
+      }
     }
-    if (!showThinkingIndicator) {
-      workingStartedAtRef.current = 0;
-    }
-  }, [showThinkingIndicator]);
+    return Date.now();
+  }, [showThinkingIndicator, renderMessages, messageTimestamps]);
 
   const groupedRenderMessages = useMemo<GroupedRenderMessage[]>(() => {
     return renderMessages.map((message, messageIndex) => {
@@ -2334,9 +2340,7 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
             <div className="space-y-6">
               {renderedMessageGroups}
               {showThinkingIndicator && (
-                <WorkingIndicator
-                  startedAt={workingStartedAtRef.current || Date.now()}
-                />
+                <WorkingIndicator startedAt={workingStartedAt || Date.now()} />
               )}
             </div>
           </div>

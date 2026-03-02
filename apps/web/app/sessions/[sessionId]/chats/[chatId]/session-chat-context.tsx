@@ -126,6 +126,8 @@ type SessionChatContextValue = {
   hadInitialMessages: boolean;
   /** The initial message snapshot used for SSR hydration */
   initialMessages: WebAgentUIMessage[];
+  /** Map of messageId → createdAt timestamp (ms) from the DB */
+  messageTimestamps: Record<string, number>;
   /** Diff data (from live sandbox or cache) */
   diff: DiffResponse | null;
   /** Whether diff is loading */
@@ -256,6 +258,8 @@ type SessionChatProviderProps = {
   session: Session;
   chat: Chat;
   initialMessages: WebAgentUIMessage[];
+  /** Map of messageId → createdAt timestamp (ms) from the DB */
+  messageTimestamps: Record<string, number>;
   children: ReactNode;
 };
 
@@ -267,6 +271,7 @@ export function SessionChatProvider({
   session: initialSession,
   chat: initialChat,
   initialMessages,
+  messageTimestamps,
   children,
 }: SessionChatProviderProps) {
   const { mutate } = useSWRConfig();
@@ -1055,6 +1060,7 @@ export function SessionChatProvider({
       updateChatModel,
       hadInitialMessages,
       initialMessages,
+      messageTimestamps,
       diff,
       diffLoading,
       diffRefreshing,
@@ -1104,6 +1110,7 @@ export function SessionChatProvider({
       updateChatModel,
       hadInitialMessages,
       initialMessages,
+      messageTimestamps,
       diff,
       diffLoading,
       diffRefreshing,
