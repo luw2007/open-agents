@@ -33,6 +33,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import useSWR from "swr";
 import type {
   WebAgentUIMessage,
   WebAgentUIMessagePart,
@@ -74,7 +75,9 @@ import {
   shouldShowThinkingIndicator,
 } from "@/lib/chat-streaming-state";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
+import { type AvailableModel } from "@/lib/models";
 import { DEFAULT_SANDBOX_TIMEOUT_MS } from "@/lib/sandbox/config";
+import { fetcher } from "@/lib/swr";
 import { streamdownPlugins } from "@/lib/streamdown-config";
 import { cn } from "@/lib/utils";
 import {
@@ -166,6 +169,10 @@ interface GroupedRenderMessage {
   message: WebAgentUIMessage;
   groups: MessageRenderGroup[];
   isStreaming: boolean;
+}
+
+interface ModelsResponse {
+  models: AvailableModel[];
 }
 
 function getPartIdentity(part: WebAgentUIMessagePart): string {
@@ -767,6 +774,9 @@ export function SessionChatContent() {
     clearChatTitle,
     refreshChats,
   } = useSessionChats(session.id);
+  const { data: modelsData, isLoading: isModelsLoading } =
+    useSWR<ModelsResponse>("/api/models", fetcher);
+  const availableModels = modelsData?.models ?? [];
   const renderMessages = useMemo(
     () => (hasMounted ? messages : initialMessages),
     [hasMounted, messages, initialMessages],
@@ -2668,6 +2678,8 @@ export function SessionChatContent() {
                     >
                       <ModelSelectorCompact
                         value={chatInfo.modelId}
+                        models={availableModels}
+                        isLoading={isModelsLoading}
                         onChange={(modelId) => {
                           void handleModelChange(modelId);
                         }}
