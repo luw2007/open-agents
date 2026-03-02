@@ -64,10 +64,7 @@ import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useScrollToBottom } from "@/hooks/use-scroll-to-bottom";
 import { useSessionChats } from "@/hooks/use-session-chats";
 import { useSlashCommands } from "@/hooks/use-slash-commands";
-import {
-  isChatInFlight as isChatInFlightStatus,
-  shouldShowThinkingIndicator,
-} from "@/lib/chat-streaming-state";
+import { isChatInFlight as isChatInFlightStatus } from "@/lib/chat-streaming-state";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
 import {
   type AvailableModel,
@@ -109,12 +106,6 @@ const Streamdown = dynamic(
 const STREAM_RECOVERY_STALL_MS = 4_000;
 const STREAM_RECOVERY_MIN_INTERVAL_MS = 8_000;
 const CHAT_IN_FLIGHT_SETTLE_MS = 300;
-const STREAMDOWN_FADE_IN_ANIMATION = {
-  animation: "fadeIn",
-  duration: 250,
-  easing: "ease-out",
-} as const;
-
 const emptySubscribe = () => () => {};
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -417,6 +408,37 @@ function SandboxHeaderBadge({
           Sandbox active
         </TooltipContent>
       </Tooltip>
+    </div>
+  );
+}
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function WorkingIndicator({ startedAt }: { startedAt: number }) {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const elapsed = Date.now() - startedAt;
+
+  return (
+    <div className="flex items-center gap-2 py-2">
+      <span className="h-2 w-2 rounded-full bg-foreground/50 animate-pulse" />
+      <span className="text-xs text-muted-foreground">
+        Working...{" "}
+        <span className="tabular-nums text-muted-foreground/60">
+          {formatElapsed(elapsed)}
+        </span>
+      </span>
     </div>
   );
 }
@@ -844,7 +866,6 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
         : false,
     [lastMessage],
   );
-  const hasSeenAssistantRenderableContentRef = useRef(false);
   const [hasPendingResponse, setHasPendingResponse] = useState(false);
 
   // Sync hasPendingResponse with the AI SDK status.
@@ -865,47 +886,27 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
   }, [isChatInFlight, status]);
 
-  useEffect(() => {
-    if (!isChatInFlight && !hasPendingResponse) {
-      hasSeenAssistantRenderableContentRef.current = false;
-      return;
-    }
-    // Only mark content as "seen" once we're actually in-flight — not during
-    // the optimistic pending phase where messages are still stale from the
-    // previous turn (due to experimental_throttle).  Without this guard the
-    // ref gets set to true from the *old* assistant message, which causes the
-    // thinking indicator to disappear prematurely when the new (empty)
-    // assistant message arrives.
-    if (isChatInFlight && hasAssistantRenderableContent) {
-      hasSeenAssistantRenderableContentRef.current = true;
-    }
-  }, [isChatInFlight, hasPendingResponse, hasAssistantRenderableContent]);
-
-  const hasSeenAssistantRenderableContent =
-    hasAssistantRenderableContent ||
-    hasSeenAssistantRenderableContentRef.current;
   const effectiveStatus = hasPendingResponse ? "streaming" : status;
+  // In inbox mode we hide assistant text while streaming, so the working
+  // indicator should stay visible for the entire duration the agent is active.
   const showThinkingIndicator = useMemo(() => {
-    // During the optimistic pending phase (user just clicked send but the
-    // AI SDK status hasn't caught up yet due to throttling), always show
-    // the thinking indicator.  The messages are stale at this point so
-    // shouldShowThinkingIndicator would make the wrong decision based on
-    // the previous turn's content.
     if (hasPendingResponse && !isChatInFlight) {
       return true;
     }
-    return shouldShowThinkingIndicator({
-      status: effectiveStatus,
-      hasAssistantRenderableContent: hasSeenAssistantRenderableContent,
-      lastMessageRole: lastMessage?.role,
-    });
-  }, [
-    effectiveStatus,
-    hasSeenAssistantRenderableContent,
-    lastMessage?.role,
-    hasPendingResponse,
-    isChatInFlight,
-  ]);
+    return isChatInFlightStatus(effectiveStatus);
+  }, [effectiveStatus, hasPendingResponse, isChatInFlight]);
+
+  // Track when the agent started working for the elapsed timer
+  const workingStartedAtRef = useRef<number>(0);
+  useEffect(() => {
+    if (showThinkingIndicator && workingStartedAtRef.current === 0) {
+      workingStartedAtRef.current = Date.now();
+    }
+    if (!showThinkingIndicator) {
+      workingStartedAtRef.current = 0;
+    }
+  }, [showThinkingIndicator]);
+
   const groupedRenderMessages = useMemo<GroupedRenderMessage[]>(() => {
     return renderMessages.map((message, messageIndex) => {
       const groups: MessageRenderGroup[] = [];
@@ -998,6 +999,12 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
               // Skip empty text parts (can happen when agent only did tool calls)
               if (!p.text.trim()) return null;
 
+              // Inbox mode: hide assistant text while the agent is still
+              // working — only reveal once the stream is complete.
+              if (m.role === "assistant" && isMessageStreaming) {
+                return null;
+              }
+
               return (
                 <div
                   key={`${m.id}-${group.renderKey}`}
@@ -1015,13 +1022,9 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
                   ) : (
                     <div className="min-w-0 w-full overflow-hidden">
                       <Streamdown
-                        animated={
-                          isMessageStreaming
-                            ? STREAMDOWN_FADE_IN_ANIMATION
-                            : undefined
-                        }
-                        mode={isMessageStreaming ? "streaming" : "static"}
-                        isAnimating={isMessageStreaming}
+                        animated={undefined}
+                        mode="static"
+                        isAnimating={false}
                         plugins={streamdownPlugins}
                       >
                         {p.text}
@@ -2306,12 +2309,9 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
             <div className="space-y-6">
               {renderedMessageGroups}
               {showThinkingIndicator && (
-                <div className="flex items-center gap-2 py-2">
-                  <span className="h-2 w-2 rounded-full bg-foreground/50 animate-pulse" />
-                  <span className="text-xs text-muted-foreground">
-                    Working...
-                  </span>
-                </div>
+                <WorkingIndicator
+                  startedAt={workingStartedAtRef.current || Date.now()}
+                />
               )}
             </div>
           </div>
@@ -2425,7 +2425,6 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
                   void setChatTitle(chatInfo.id, nextTitle);
                 }
                 setHasPendingResponse(true);
-                hasSeenAssistantRenderableContentRef.current = false;
                 void setChatStreaming(chatInfo.id, true);
                 try {
                   await sendMessage({ text: messageText, files });
