@@ -8,14 +8,13 @@ import {
   SidebarInset,
   SidebarProvider,
 } from "@/components/ui/sidebar";
-import {
-  type SessionChatListItem,
-  useSessionChats,
-} from "@/hooks/use-session-chats";
+import { useSessionChats } from "@/hooks/use-session-chats";
 import { useSessions } from "@/hooks/use-sessions";
 import type { Session } from "@/lib/db/schema";
 import { InboxSidebar } from "@/components/inbox-sidebar";
 import { SessionLayoutContext } from "./session-layout-context";
+
+import type { SessionChatListItem } from "@/hooks/use-session-chats";
 
 type SessionLayoutShellProps = {
   session: Session;
@@ -35,8 +34,11 @@ export function SessionLayoutShell({
 
   const sessionId = initialSession.id;
 
-  // Keep session chats hook alive so chat-level features still work
-  useSessionChats(sessionId, { initialData: initialChatsData });
+  const {
+    chats,
+    loading: chatsLoading,
+    createChat,
+  } = useSessionChats(sessionId, { initialData: initialChatsData });
 
   // Fetch all sessions for the inbox sidebar
   const {
@@ -79,6 +81,14 @@ export function SessionLayoutShell({
     [refreshSessions],
   );
 
+  // Navigate to a specific chat within the current session
+  const switchChat = useCallback(
+    (chatId: string) => {
+      router.push(`/sessions/${sessionId}/chats/${chatId}`);
+    },
+    [router, sessionId],
+  );
+
   const sidebarContent = (
     <InboxSidebar
       sessions={sessions}
@@ -99,8 +109,12 @@ export function SessionLayoutShell({
         cloneUrl: initialSession.cloneUrl,
         branch: initialSession.branch,
       },
+      chats,
+      chatsLoading,
+      createChat,
+      switchChat,
     }),
-    [initialSession],
+    [initialSession, chats, chatsLoading, createChat, switchChat],
   );
 
   return (

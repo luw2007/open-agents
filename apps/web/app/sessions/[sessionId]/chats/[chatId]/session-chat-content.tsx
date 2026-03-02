@@ -53,6 +53,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { ChatSwitcherDropdown } from "@/components/chat-switcher-dropdown";
 import {
   Tooltip,
   TooltipContent,
@@ -2073,6 +2074,8 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2 md:gap-4">
             <SidebarTrigger className="shrink-0" />
+            <ChatSwitcherDropdown activeChatId={chatInfo.id} />
+            <span className="text-muted-foreground/30">|</span>
             <div className="flex min-w-0 items-center gap-2 text-sm">
               {session.repoName ? (
                 <>
