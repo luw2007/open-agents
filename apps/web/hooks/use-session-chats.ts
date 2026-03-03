@@ -32,12 +32,21 @@ type StreamingOverlay = {
 type ChatOptimisticOverlay = {
   title?: string;
   streaming?: StreamingOverlay;
+  /**
+   * Timestamp when streaming was optimistically cleared on the client.
+   * Prevents stale server responses (where activeStreamId hasn't been nulled
+   * yet by onFinish) from re-introducing the streaming indicator.
+   */
+  streamingClearedAt?: number;
 };
 
 // Keep the optimistic streaming badge briefly to cover client/server handoff,
 // but clear quickly when the server never confirms streaming (fast turns,
 // route switches, aborts) so the sidebar indicator doesn't linger.
 const STREAMING_RACE_GRACE_MS = 4_000;
+// Maximum time the "streaming just cleared" overlay suppresses stale server
+// data before we let the server be authoritative again.
+const STREAMING_CLEARED_GRACE_MS = 8_000;
 const OVERLAY_INACTIVE_TTL_MS = 5 * 60_000;
 const STREAMING_REFRESH_INTERVAL_MS = 1_000;
 const IDLE_REFRESH_INTERVAL_MS = 8_000;
@@ -85,7 +94,7 @@ function getSessionOverlay(
 }
 
 function isOverlayEmpty(overlay: ChatOptimisticOverlay): boolean {
-  return !overlay.title && !overlay.streaming;
+  return !overlay.title && !overlay.streaming && !overlay.streamingClearedAt;
 }
 
 function overlaysEqual(
@@ -96,7 +105,8 @@ function overlaysEqual(
     left?.title === right.title &&
     left?.streaming?.setAt === right.streaming?.setAt &&
     left?.streaming?.seenServerStreaming ===
-      right.streaming?.seenServerStreaming
+      right.streaming?.seenServerStreaming &&
+    left?.streamingClearedAt === right.streamingClearedAt
   );
 }
 
@@ -156,8 +166,15 @@ export function useSessionChats(
               (overlay) => overlay.streaming,
             )
           : false;
+        // Keep fast polling briefly after streaming clears so we reconcile
+        // the server state quickly and can drop the cleared-overlay marker.
+        const hasPendingClear = optimisticOverlay
+          ? Array.from(optimisticOverlay.values()).some(
+              (overlay) => overlay.streamingClearedAt,
+            )
+          : false;
 
-        if (hasStreamingChat || hasOptimisticStreaming) {
+        if (hasStreamingChat || hasOptimisticStreaming || hasPendingClear) {
           return STREAMING_REFRESH_INTERVAL_MS;
         }
 
@@ -221,6 +238,12 @@ export function useSessionChats(
     }
     if (overlay.streaming && !chat.isStreaming) {
       next = { ...next, isStreaming: true };
+    }
+    // When streaming was recently cleared on the client, suppress stale
+    // server data that still reports isStreaming: true (the server-side
+    // onFinish hasn't committed the activeStreamId = null write yet).
+    if (overlay.streamingClearedAt && !overlay.streaming && chat.isStreaming) {
+      next = { ...next, isStreaming: false };
     }
     return next;
   });
@@ -299,6 +322,18 @@ export function useSessionChats(
             }
             delete nextOverlay.streaming;
           }
+        }
+      }
+
+      // Clean up the "streaming just cleared" marker once the server
+      // confirms the stream is no longer active, or after a safety timeout.
+      if (overlay.streamingClearedAt) {
+        const clearedAgeMs = Date.now() - overlay.streamingClearedAt;
+        if (!chat.isStreaming || clearedAgeMs > STREAMING_CLEARED_GRACE_MS) {
+          if (nextOverlay === overlay) {
+            nextOverlay = { ...overlay };
+          }
+          delete nextOverlay.streamingClearedAt;
         }
       }
 
@@ -508,17 +543,26 @@ export function useSessionChats(
 
   const setChatStreaming = async (chatId: string, isStreaming: boolean) => {
     if (isStreaming) {
-      updateOverlay(chatId, (overlay) => ({
-        ...overlay,
-        streaming: {
-          setAt: Date.now(),
-          seenServerStreaming: false,
-        },
-      }));
+      updateOverlay(chatId, (overlay) => {
+        const next = {
+          ...overlay,
+          streaming: {
+            setAt: Date.now(),
+            seenServerStreaming: false,
+          },
+        };
+        // Starting a new stream clears any stale "just cleared" marker.
+        delete next.streamingClearedAt;
+        return next;
+      });
     } else {
       updateOverlay(chatId, (overlay) => {
         const next = { ...overlay };
         delete next.streaming;
+        // Record when streaming was cleared so the merge logic can suppress
+        // stale server responses that still report isStreaming: true (the
+        // server's onFinish hasn't cleared activeStreamId yet).
+        next.streamingClearedAt = Date.now();
         return next;
       });
     }
