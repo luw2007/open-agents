@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { InboxSidebar } from "@/components/inbox-sidebar";
 import { useBackgroundChatNotifications } from "@/hooks/use-background-chat-notifications";
 import {
@@ -35,6 +35,11 @@ type SessionLayoutShellProps = {
   };
   children: React.ReactNode;
 };
+
+const queuedMessagesCacheBySessionId = new Map<
+  string,
+  Record<string, QueuedComposerMessage[]>
+>();
 
 export function SessionLayoutShell({
   session: initialSession,
@@ -138,7 +143,7 @@ export function SessionLayoutShell({
 
   const [queuedMessagesByChatId, setQueuedMessagesByChatId] = useState<
     Record<string, QueuedComposerMessage[]>
-  >({});
+  >(() => queuedMessagesCacheBySessionId.get(sessionId) ?? {});
 
   const setQueuedMessagesForChat = useCallback(
     (
@@ -151,28 +156,43 @@ export function SessionLayoutShell({
         const previousForChat = previousByChatId[chatId] ?? [];
         const nextForChat = updater(previousForChat);
 
+        let nextByChatId: Record<string, QueuedComposerMessage[]>;
+
         if (nextForChat.length === 0) {
           if (!(chatId in previousByChatId)) {
             return previousByChatId;
           }
 
-          const remainingByChatId = { ...previousByChatId };
-          delete remainingByChatId[chatId];
-          return remainingByChatId;
+          nextByChatId = { ...previousByChatId };
+          delete nextByChatId[chatId];
+        } else {
+          if (nextForChat === previousForChat) {
+            return previousByChatId;
+          }
+
+          nextByChatId = {
+            ...previousByChatId,
+            [chatId]: nextForChat,
+          };
         }
 
-        if (nextForChat === previousForChat) {
-          return previousByChatId;
+        if (Object.keys(nextByChatId).length === 0) {
+          queuedMessagesCacheBySessionId.delete(sessionId);
+        } else {
+          queuedMessagesCacheBySessionId.set(sessionId, nextByChatId);
         }
 
-        return {
-          ...previousByChatId,
-          [chatId]: nextForChat,
-        };
+        return nextByChatId;
       });
     },
-    [],
+    [sessionId],
   );
+
+  useEffect(() => {
+    setQueuedMessagesByChatId(
+      queuedMessagesCacheBySessionId.get(sessionId) ?? {},
+    );
+  }, [sessionId]);
 
   // Detect when a background session finishes streaming and show a toast.
   useBackgroundChatNotifications(
