@@ -1,4 +1,5 @@
 import type { ModelMessage } from "ai";
+import { shouldApplyOpenAIReasoningDefaults } from "../models";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -8,57 +9,83 @@ export function stripInvalidOpenAIReasoningParts(
   messages: ModelMessage[],
   modelId: string,
 ): { messages: ModelMessage[]; strippedBlocks: number } {
-  if (!modelId.startsWith("openai/")) {
+  if (!shouldApplyOpenAIReasoningDefaults(modelId)) {
     return { messages, strippedBlocks: 0 };
   }
 
+  let sanitizedMessages: ModelMessage[] | null = null;
   let strippedBlocks = 0;
 
-  const sanitizedMessages = messages.map((message) => {
+  for (
+    let messageIndex = 0;
+    messageIndex < messages.length;
+    messageIndex += 1
+  ) {
+    const message = messages[messageIndex];
     if (
       !message ||
       message.role !== "assistant" ||
       typeof message.content === "string"
     ) {
-      return message;
+      continue;
     }
 
-    let changed = false;
-    const sanitizedContent = message.content.filter((part) => {
-      if (!part || part.type !== "reasoning") {
-        return true;
+    let sanitizedContent: typeof message.content | null = null;
+
+    for (
+      let partIndex = 0;
+      partIndex < message.content.length;
+      partIndex += 1
+    ) {
+      const part = message.content[partIndex];
+      let shouldStrip = false;
+
+      if (part && part.type === "reasoning") {
+        const providerOptions =
+          "providerOptions" in part ? part.providerOptions : undefined;
+        const openaiOptions =
+          isRecord(providerOptions) && isRecord(providerOptions.openai)
+            ? providerOptions.openai
+            : null;
+
+        if (openaiOptions) {
+          const itemId = openaiOptions.itemId;
+          const encryptedContent = openaiOptions.reasoningEncryptedContent;
+
+          shouldStrip =
+            typeof itemId === "string" &&
+            itemId.length > 0 &&
+            !(
+              typeof encryptedContent === "string" &&
+              encryptedContent.trim().length > 0
+            );
+        }
       }
 
-      const providerOptions =
-        "providerOptions" in part ? part.providerOptions : undefined;
-      const openaiOptions =
-        isRecord(providerOptions) && isRecord(providerOptions.openai)
-          ? providerOptions.openai
-          : null;
-      if (!openaiOptions) {
-        return true;
+      if (!shouldStrip) {
+        if (sanitizedContent && part) {
+          sanitizedContent.push(part);
+        }
+        continue;
       }
 
-      const itemId = openaiOptions.itemId;
-      if (typeof itemId !== "string" || itemId.length === 0) {
-        return true;
-      }
-
-      const encryptedContent = openaiOptions.reasoningEncryptedContent;
-      if (
-        typeof encryptedContent === "string" &&
-        encryptedContent.trim().length > 0
-      ) {
-        return true;
-      }
-
+      sanitizedMessages ??= messages.slice();
+      sanitizedContent ??= message.content.slice(0, partIndex);
       strippedBlocks += 1;
-      changed = true;
-      return false;
-    });
+    }
 
-    return changed ? { ...message, content: sanitizedContent } : message;
-  });
+    if (sanitizedContent) {
+      sanitizedMessages ??= messages.slice();
+      sanitizedMessages[messageIndex] = {
+        ...message,
+        content: sanitizedContent,
+      };
+    }
+  }
+
+  if (!sanitizedMessages) {
+    return { messages, strippedBlocks: 0 };
+  }
 
   return { messages: sanitizedMessages, strippedBlocks };
 }

@@ -106,6 +106,32 @@ I need to respond to the user asking if I'm sure about something. It's important
   },
 ];
 
+const validGpt5Transcript: ModelMessage[] = [
+  {
+    role: "user",
+    content: [{ type: "text", text: "hi" }],
+  },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "reasoning",
+        text: "Thinking through a greeting.",
+        providerOptions: {
+          openai: {
+            itemId: "rs_valid",
+            reasoningEncryptedContent: "encrypted-valid",
+          },
+        },
+      },
+      {
+        type: "text",
+        text: "Hello there.",
+      },
+    ],
+  },
+];
+
 describe("stripInvalidOpenAIReasoningParts", () => {
   test("strips only the reported GPT-5 reasoning block that is missing encrypted content", () => {
     const messages = structuredClone(reportedTranscript);
@@ -122,7 +148,31 @@ describe("stripInvalidOpenAIReasoningParts", () => {
     );
 
     expect(result.strippedBlocks).toBe(1);
+    expect(result.messages).not.toBe(messages);
     expect(messages).toEqual(reportedTranscript);
     expect(result.messages).toEqual(expectedMessages);
+  });
+
+  test("skips filtering entirely for non-GPT-5 OpenAI models", () => {
+    const messages = structuredClone(reportedTranscript);
+
+    const result = stripInvalidOpenAIReasoningParts(messages, "openai/gpt-4o");
+
+    expect(result.strippedBlocks).toBe(0);
+    expect(result.messages).toBe(messages);
+    expect(result.messages).toEqual(reportedTranscript);
+  });
+
+  test("returns the original messages array when a GPT-5 transcript needs no stripping", () => {
+    const messages = structuredClone(validGpt5Transcript);
+
+    const result = stripInvalidOpenAIReasoningParts(
+      messages,
+      "openai/gpt-5.4-codex",
+    );
+
+    expect(result.strippedBlocks).toBe(0);
+    expect(result.messages).toBe(messages);
+    expect(result.messages).toEqual(validGpt5Transcript);
   });
 });
