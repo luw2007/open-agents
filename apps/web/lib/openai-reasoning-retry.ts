@@ -45,12 +45,19 @@ function getOpenAIReasoningItemId(part: unknown): string | null {
     return null;
   }
 
+  const providerMetadata = part.providerMetadata;
   const providerOptions = part.providerOptions;
-  if (!isRecord(providerOptions)) {
+  const providerData = isRecord(providerMetadata)
+    ? providerMetadata
+    : isRecord(providerOptions)
+      ? providerOptions
+      : null;
+
+  if (!providerData) {
     return null;
   }
 
-  const openaiOptions = providerOptions.openai;
+  const openaiOptions = providerData.openai;
   if (!isRecord(openaiOptions)) {
     return null;
   }
@@ -60,7 +67,7 @@ function getOpenAIReasoningItemId(part: unknown): string | null {
 }
 
 function extractOpenAIItemIdFromErrorMessage(message: string): string | null {
-  const match = message.match(/Item with id '([^']+)' not found\./i);
+  const match = message.match(/Item with id ['"]([^'"]+)['"] not found\./i);
   const itemId = match?.[1];
   return itemId && itemId.length > 0 ? itemId : null;
 }

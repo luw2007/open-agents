@@ -23,6 +23,21 @@ function reasoningPart(itemId: string, text: string): Record<string, unknown> {
   };
 }
 
+function reasoningPartWithProviderMetadata(
+  itemId: string,
+  text: string,
+): Record<string, unknown> {
+  return {
+    type: "reasoning",
+    text,
+    providerMetadata: {
+      openai: {
+        itemId,
+      },
+    },
+  };
+}
+
 describe("openai reasoning retry helpers", () => {
   test("detects the OpenAI missing reasoning item error", () => {
     expect(
@@ -81,6 +96,39 @@ describe("openai reasoning retry helpers", () => {
         id: "user-1",
         role: "user",
         parts: [{ type: "text", text: "Keep going" }],
+      },
+    ]);
+  });
+
+  test("matches item ids from providerMetadata reasoning parts", () => {
+    const messages: TestMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          reasoningPartWithProviderMetadata(
+            "rs_meta",
+            "reasoning via metadata",
+          ),
+          { type: "text", text: "assistant output" },
+        ],
+      },
+    ];
+
+    const retryPayload = stripInvalidOpenAIReasoningPartsForRetry(
+      messages,
+      new Error(
+        'Item with id "rs_meta" not found. Items are not persisted when `store` is set to false.',
+      ),
+    );
+
+    expect(retryPayload).not.toBeNull();
+    expect(retryPayload?.removedItemId).toBe("rs_meta");
+    expect(retryPayload?.messages).toEqual([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "assistant output" }],
       },
     ]);
   });
