@@ -49,6 +49,16 @@ describe("openai reasoning retry helpers", () => {
     ).toBe(true);
   });
 
+  test("detects store=false errors when message omits backticks", () => {
+    expect(
+      isOpenAIReasoningItemNotFoundError(
+        new Error(
+          "Item with id 'rs_plain' not found. Items are not persisted when store is set to false.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   test("ignores unrelated errors", () => {
     expect(
       isOpenAIReasoningItemNotFoundError(new Error("network timeout")),

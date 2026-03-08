@@ -1,5 +1,7 @@
 const OPENAI_STORE_FALSE_ERROR_FRAGMENT =
   "items are not persisted when `store` is set to false";
+const OPENAI_STORE_FALSE_ERROR_FRAGMENT_PLAIN =
+  "items are not persisted when store is set to false";
 
 interface MessageWithParts {
   role: string;
@@ -67,7 +69,7 @@ function getOpenAIReasoningItemId(part: unknown): string | null {
 }
 
 function extractOpenAIItemIdFromErrorMessage(message: string): string | null {
-  const match = message.match(/Item with id ['"]([^'"]+)['"] not found\./i);
+  const match = message.match(/Item with id ['"]([^'"]+)['"] not found/i);
   const itemId = match?.[1];
   return itemId && itemId.length > 0 ? itemId : null;
 }
@@ -234,11 +236,17 @@ export function isOpenAIReasoningItemNotFoundError(error: unknown): boolean {
   }
 
   const normalizedMessage = message.toLowerCase();
-  return (
+  const isMissingItemError =
     normalizedMessage.includes("item with id") &&
-    normalizedMessage.includes("not found") &&
-    normalizedMessage.includes(OPENAI_STORE_FALSE_ERROR_FRAGMENT)
-  );
+    normalizedMessage.includes("not found");
+  const isStoreFalseNotPersistedError =
+    normalizedMessage.includes(OPENAI_STORE_FALSE_ERROR_FRAGMENT) ||
+    normalizedMessage.includes(OPENAI_STORE_FALSE_ERROR_FRAGMENT_PLAIN) ||
+    (normalizedMessage.includes("items are not persisted") &&
+      normalizedMessage.includes("store") &&
+      normalizedMessage.includes("set to false"));
+
+  return isMissingItemError && isStoreFalseNotPersistedError;
 }
 
 export function stripInvalidOpenAIReasoningPartsForRetry<
