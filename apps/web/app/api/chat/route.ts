@@ -28,6 +28,7 @@ import {
   getChatById,
   getSessionById,
   isFirstChatMessage,
+  touchChat,
   updateChat,
   updateChatActiveStreamId,
   updateChatAssistantActivity,
@@ -38,6 +39,7 @@ import { recordUsage } from "@/lib/db/usage";
 import { getRepoToken } from "@/lib/github/get-repo-token";
 import { getUserGitHubToken } from "@/lib/github/user-token";
 import { getUserPreferences } from "@/lib/db/user-preferences";
+import { resolveModelSelection } from "@/lib/model-variants";
 import { DEFAULT_MODEL_ID } from "@/lib/models";
 import { buildActiveLifecycleUpdate } from "@/lib/sandbox/lifecycle";
 import { isSandboxActive } from "@/lib/sandbox/utils";
@@ -46,10 +48,63 @@ import { getServerSession } from "@/lib/session/get-server-session";
 const cachedInputTokensFor = (usage: LanguageModelUsage) =>
   usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens ?? 0;
 
+const DEFAULT_CONTEXT_LIMIT = 200_000;
+
+interface ChatCompactionContextPayload {
+  contextLimit?: number;
+  lastInputTokens?: number;
+}
+
 interface ChatRequestBody {
   messages: WebAgentUIMessage[];
   sessionId?: string;
   chatId?: string;
+  context?: ChatCompactionContextPayload;
+}
+
+function toPositiveInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : undefined;
+}
+
+function toPositiveInputTokens(value: unknown): number | undefined {
+  const normalized = toPositiveInteger(value);
+  return normalized && normalized > 0 ? normalized : undefined;
+}
+
+function extractLastInputTokensFromMessages(
+  messages: WebAgentUIMessage[],
+): number | undefined {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (!message || message.role !== "assistant") {
+      continue;
+    }
+
+    const metadata = (message as { metadata?: unknown }).metadata;
+    if (!metadata || typeof metadata !== "object") {
+      continue;
+    }
+
+    const lastStepUsage = (metadata as { lastStepUsage?: unknown })
+      .lastStepUsage;
+    if (!lastStepUsage || typeof lastStepUsage !== "object") {
+      continue;
+    }
+
+    const inputTokens = (lastStepUsage as { inputTokens?: unknown })
+      .inputTokens;
+    const normalizedTokens = toPositiveInputTokens(inputTokens);
+    if (normalizedTokens) {
+      return normalizedTokens;
+    }
+  }
+
+  return undefined;
 }
 
 const SKILLS_CACHE_TTL_MS = 60_000;
@@ -78,6 +133,38 @@ const pruneExpiredSkillCache = (now: number) => {
 
 export const maxDuration = 800;
 
+function refreshCachedDiffInBackground(req: Request, sessionId: string): void {
+  const cookieHeader = req.headers.get("cookie");
+  if (!cookieHeader) {
+    return;
+  }
+
+  const diffUrl = new URL(`/api/sessions/${sessionId}/diff`, req.url);
+  after(
+    fetch(diffUrl, {
+      method: "GET",
+      headers: {
+        cookie: cookieHeader,
+      },
+      cache: "no-store",
+    })
+      .then((response) => {
+        if (response.ok) {
+          return;
+        }
+        console.warn(
+          `[chat] Failed to refresh cached diff for session ${sessionId}: ${response.status}`,
+        );
+      })
+      .catch((error) => {
+        console.error(
+          `[chat] Failed to refresh cached diff for session ${sessionId}:`,
+          error,
+        );
+      }),
+  );
+}
+
 export async function POST(req: Request) {
   // 1. Validate session
   const session = await getServerSession();
@@ -92,7 +179,12 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { messages, sessionId, chatId } = body;
+  const {
+    messages,
+    sessionId,
+    chatId,
+    context: requestedCompactionContext,
+  } = body;
 
   // 2. Require sessionId and chatId to ensure sandbox ownership verification
   if (!sessionId || !chatId) {
@@ -226,6 +318,10 @@ export async function POST(req: Request) {
             parts: latestMessage,
           });
 
+          if (createdUserMessage) {
+            await touchChat(chatId);
+          }
+
           // Update chat title to first 30 chars of user's first message
           const shouldSetTitle =
             createdUserMessage !== undefined &&
@@ -268,36 +364,126 @@ export async function POST(req: Request) {
     }
   }
 
-  // Resolve model from chat's modelId, falling back to default if invalid
-  const modelId = chat.modelId ?? DEFAULT_MODEL_ID;
-  let resolvedModelId = modelId;
+  const preferences = await getUserPreferences(session.user.id).catch(
+    (error) => {
+      console.error("Failed to load user preferences:", error);
+      return null;
+    },
+  );
+  const modelVariants = preferences?.modelVariants ?? [];
+
+  // Resolve model from chat's modelId, supporting variant IDs.
+  const selectedModelId = chat.modelId ?? DEFAULT_MODEL_ID;
+  const mainSelection = resolveModelSelection(selectedModelId, modelVariants);
+  if (mainSelection.isMissingVariant) {
+    console.warn(
+      `Selected model variant "${selectedModelId}" was not found. Falling back to default model.`,
+    );
+  }
+
+  let resolvedModelId = mainSelection.isMissingVariant
+    ? DEFAULT_MODEL_ID
+    : mainSelection.resolvedModelId;
+  let modelConfig: {
+    modelId: string;
+    gatewayOptions?: {
+      providerOptionsOverrides: Record<string, Record<string, unknown>>;
+    };
+  } = { modelId: resolvedModelId };
+
   try {
-    gateway(modelId as GatewayModelId);
+    gateway(resolvedModelId as GatewayModelId, {
+      providerOptionsOverrides: mainSelection.isMissingVariant
+        ? undefined
+        : mainSelection.providerOptionsByProvider,
+    });
+    if (
+      !mainSelection.isMissingVariant &&
+      mainSelection.providerOptionsByProvider
+    ) {
+      modelConfig = {
+        modelId: resolvedModelId,
+        gatewayOptions: {
+          providerOptionsOverrides: mainSelection.providerOptionsByProvider,
+        },
+      };
+    }
   } catch (error) {
     console.error(
-      `Invalid model ID "${modelId}", falling back to default:`,
+      `Invalid model ID "${resolvedModelId}", falling back to default:`,
       error,
     );
     resolvedModelId = DEFAULT_MODEL_ID;
+    modelConfig = { modelId: DEFAULT_MODEL_ID };
   }
 
   // Resolve subagent model from user preferences (if configured)
-  let subagentModelId: string | undefined;
-  try {
-    const preferences = await getUserPreferences(session.user.id);
-    if (preferences.defaultSubagentModelId) {
-      gateway(preferences.defaultSubagentModelId as GatewayModelId);
-      subagentModelId = preferences.defaultSubagentModelId;
+  let subagentModelConfig:
+    | {
+        modelId: string;
+        gatewayOptions?: {
+          providerOptionsOverrides: Record<string, Record<string, unknown>>;
+        };
+      }
+    | undefined;
+
+  if (preferences?.defaultSubagentModelId) {
+    const subagentSelection = resolveModelSelection(
+      preferences.defaultSubagentModelId,
+      modelVariants,
+    );
+
+    if (subagentSelection.isMissingVariant) {
+      console.warn(
+        `Subagent model variant "${preferences.defaultSubagentModelId}" was not found. Falling back to default model.`,
+      );
     }
-  } catch (error) {
-    console.error("Failed to resolve subagent model preference:", error);
+
+    const subagentResolvedModelId = subagentSelection.isMissingVariant
+      ? DEFAULT_MODEL_ID
+      : subagentSelection.resolvedModelId;
+
+    try {
+      gateway(subagentResolvedModelId as GatewayModelId, {
+        providerOptionsOverrides: subagentSelection.isMissingVariant
+          ? undefined
+          : subagentSelection.providerOptionsByProvider,
+      });
+      subagentModelConfig = {
+        modelId: subagentResolvedModelId,
+        ...(subagentSelection.isMissingVariant ||
+        !subagentSelection.providerOptionsByProvider
+          ? {}
+          : {
+              gatewayOptions: {
+                providerOptionsOverrides:
+                  subagentSelection.providerOptionsByProvider,
+              },
+            }),
+      };
+    } catch (error) {
+      console.error("Failed to resolve subagent model preference:", error);
+    }
   }
+
+  const requestedContextLimit = toPositiveInteger(
+    requestedCompactionContext?.contextLimit,
+  );
+  const requestedLastInputTokens = toPositiveInputTokens(
+    requestedCompactionContext?.lastInputTokens,
+  );
+  const inferredLastInputTokens = extractLastInputTokensFromMessages(messages);
+
+  const compactionContext = {
+    contextLimit: requestedContextLimit ?? DEFAULT_CONTEXT_LIMIT,
+    lastInputTokens: requestedLastInputTokens ?? inferredLastInputTokens,
+  };
 
   const agentCallOptions = {
     sandboxConfig: createSandboxConfigFromInstance(sandbox),
-    modelConfig: { modelId: resolvedModelId },
-    ...(subagentModelId && {
-      subagentModelConfig: { modelId: subagentModelId },
+    modelConfig,
+    ...(subagentModelConfig && {
+      subagentModelConfig,
     }),
     approval: {
       type: "interactive" as const,
@@ -305,6 +491,7 @@ export async function POST(req: Request) {
       sessionRules: [],
     },
     ...(skills.length > 0 && { skills }),
+    context: compactionContext,
   };
 
   const run = await start(runDurableChatWorkflow, [
@@ -397,8 +584,10 @@ export async function POST(req: Request) {
 
     const activityAt = new Date();
     const responseMessage =
-      (workflowResult?.responseMessage as WebAgentUIMessage | null | undefined) ??
-      null;
+      (workflowResult?.responseMessage as
+        | WebAgentUIMessage
+        | null
+        | undefined) ?? null;
     const totalMessageUsage = workflowResult?.totalMessageUsage;
 
     await persistAssistantMessage(responseMessage, activityAt);
@@ -456,6 +645,9 @@ export async function POST(req: Request) {
         }
       }
     }
+
+    // Keep offline diff cache warm even when the chat page is not open.
+    refreshCachedDiffInBackground(req, sessionId);
 
     if (!responseMessage) {
       return;

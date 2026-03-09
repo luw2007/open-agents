@@ -15,6 +15,7 @@ export interface DurableAgentCallOptions {
   customInstructions?: string;
   executionMode?: "normal" | "durable";
   skills?: unknown[];
+  context?: unknown;
 }
 
 export interface ChatWorkflowResult {

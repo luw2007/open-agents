@@ -1,9 +1,3 @@
-// Context management exports
-export {
-  getContextLimit,
-  getModelLabel,
-  MODEL_CONTEXT_LIMITS,
-} from "./context-management/model-limits";
 export { type GatewayConfig, type GatewayOptions, gateway } from "./models";
 export type { OpenHarnessAgentCallOptions } from "./call-options/schema";
 export type { OpenHarnessModelConfig } from "./call-options/model-config";
@@ -41,7 +35,11 @@ export {
 } from "./tools/ask-user-question";
 export type { SkillToolInput } from "./tools/skill";
 // Tool exports
-export { type TaskToolUIPart } from "./tools/task";
+export type {
+  TaskPendingToolCall,
+  TaskToolOutput,
+  TaskToolUIPart,
+} from "./tools/task";
 export type {
   ApprovalConfig,
   ApprovalRule,

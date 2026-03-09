@@ -9,8 +9,8 @@ export const DEFAULT_SANDBOX_TIMEOUT_MS = 5 * 60 * 60 * 1000;
 /** Manual extension duration for explicit fallback flows (20 minutes) */
 export const EXTEND_TIMEOUT_DURATION_MS = 20 * 60 * 1000;
 
-/** Inactivity window before lifecycle hibernates an idle sandbox (20 minutes) */
-export const SANDBOX_INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000;
+/** Inactivity window before lifecycle hibernates an idle sandbox (30 minutes) */
+export const SANDBOX_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** Buffer for sandbox expiry checks (10 seconds) */
 export const SANDBOX_EXPIRES_BUFFER_MS = 10 * 1000;
@@ -35,8 +35,11 @@ export const DEFAULT_WORKING_DIRECTORY = "/vercel/sandbox";
 
 /**
  * Base snapshot for fresh cloud sandboxes.
- * Includes commonly-needed tooling such as bun and jq.
+ * - Current snapshot includes: bun + jq + agent-browser + chromium
+ * - Previous snapshot includes: bun + jq
  */
 export const DEFAULT_SANDBOX_BASE_SNAPSHOT_ID =
   process.env.VERCEL_SANDBOX_BASE_SNAPSHOT_ID ??
-  "snap_MQ0NqdLL5qEXiYusgWL3K0yaMmql";
+  // Previous snapshot (bun + jq): "snap_MQ0NqdLL5qEXiYusgWL3K0yaMmql"
+  // Current snapshot (bun + jq + agent-browser + chromium):
+  "snap_C8tUFhwRXZky4MaFvTuwO7DH66wx";

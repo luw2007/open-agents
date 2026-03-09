@@ -251,19 +251,20 @@ export class VercelSandbox implements Sandbox {
         .filter((line): line is string => line !== undefined) ?? [];
 
     const portLines = portPreviewLines.length
-      ? `\n- Dev server preview URLs (start a server on one of these ports, then share the URL with the user):\n${portPreviewLines.join("\n")}`
+      ? `\n- Dev server URLs for locally running servers (start a server on one of these ports, then share the URL with the user):\n${portPreviewLines.join("\n")}`
       : "";
 
     const hostLine = host ? `\n- Sandbox host: ${host}` : "";
     const runtimeEnvLine =
       host || previewPorts.length > 0
-        ? "\n- Runtime env vars for previews are injected into commands: SANDBOX_HOST and SANDBOX_URL_<PORT> (for routable ports)"
+        ? "\n- Runtime env vars for dev server URLs are injected into commands: SANDBOX_HOST and SANDBOX_URL_<PORT> (for routable ports)"
         : "";
 
     return `- Ephemeral sandbox - all work is lost unless committed and pushed to git
 - Default workflow: create a new branch, commit changes, push, and open a PR (since the sandbox is ephemeral, this ensures work is preserved)
-- All bash commands already run in the working directory by default — never prepend \`cd /vercel/sandbox &&\` or similar; just run the command directly
-- Do NOT prefix any bash command with a \`cd\` to the working directory — commands like \`cd /vercel/sandbox && npm test\` are WRONG; just use \`npm test\`
+- All bash commands already run in the working directory by default — never prepend \`cd <working-directory> &&\`; just run the command directly
+- Do NOT prefix any bash command with a \`cd\` to the working directory — commands like \`cd <working-directory> && npm test\` are WRONG; just use \`npm test\`
+- Use workspace-relative paths for read/write/search/edit operations
 - Git is already configured (user, email, remote auth) - no setup or verification needed
 - GitHub CLI (gh) is NOT available - use curl with the GitHub API to create PRs
   Use the $GITHUB_TOKEN environment variable directly (do not paste the actual token):
@@ -271,6 +272,7 @@ export class VercelSandbox implements Sandbox {
 - Node.js runtime with npm/pnpm available
 - Bun and jq are preinstalled
 - Dependencies may not be installed. Before running project scripts (build, typecheck, lint, test), check if \`node_modules\` exists and run the package manager install command if needed (e.g. \`bun install\`, \`npm install\`)
+- This snapshot includes agent-browser; when validating UI or end-to-end behavior, start the dev server and use agent-browser against the local dev server URL
 - This sandbox already runs on Vercel; do not suggest deploying to Vercel just to obtain a shareable preview link
 ${hostLine}${portLines}${runtimeEnvLine}`;
   }
@@ -566,17 +568,16 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
   }
 
   async readFile(path: string, _encoding: "utf-8"): Promise<string> {
-    const result = await this.sdk.runCommand({
-      cmd: "cat",
-      args: [path],
-      env: this.env,
-    });
+    // Use the SDK's native readFileToBuffer method which handles streaming
+    // internally, avoiding the command output size limit that can occur with
+    // large files when using `cat` via runCommand.
+    const buffer = await this.sdk.readFileToBuffer({ path });
 
-    if (result.exitCode !== 0) {
+    if (buffer === null) {
       throw new Error(`Failed to read file: ${path}`);
     }
 
-    return result.stdout();
+    return buffer.toString("utf-8");
   }
 
   async writeFile(
@@ -590,18 +591,12 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
       await this.mkdir(parentDir, { recursive: true });
     }
 
-    // Use base64 encoding to safely handle special characters
-    // Use printf '%s' instead of echo to avoid interpreting backslash sequences
-    const base64Content = Buffer.from(content, "utf-8").toString("base64");
-    const result = await this.sdk.runCommand({
-      cmd: "bash",
-      args: ["-c", `printf '%s' "${base64Content}" | base64 -d > "${path}"`],
-      env: this.env,
-    });
-
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to write file: ${path}`);
-    }
+    // Use the SDK's native writeFiles method which handles streaming internally,
+    // avoiding the command argument size limit that causes "Expected a stream of
+    // command data" errors with large files when using runCommand + base64.
+    await this.sdk.writeFiles([
+      { path, content: Buffer.from(content, "utf-8") },
+    ]);
   }
 
   async stat(path: string): Promise<SandboxStats> {

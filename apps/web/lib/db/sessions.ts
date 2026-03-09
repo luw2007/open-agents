@@ -1,4 +1,4 @@
-import { and, desc, eq, getTableColumns, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "./client";
 import {
   chatMessages,
@@ -8,7 +8,9 @@ import {
   type NewChatMessage,
   type NewChatRead,
   type NewSession,
+  type NewShare,
   sessions,
+  shares,
 } from "./schema";
 
 export async function createSession(data: NewSession) {
@@ -59,10 +61,34 @@ export async function getSessionById(sessionId: string) {
   });
 }
 
-export async function getSessionByShareId(shareId: string) {
-  return db.query.sessions.findFirst({
-    where: eq(sessions.shareId, shareId),
+export async function getShareById(shareId: string) {
+  return db.query.shares.findFirst({
+    where: eq(shares.id, shareId),
   });
+}
+
+export async function getShareByChatId(chatId: string) {
+  return db.query.shares.findFirst({
+    where: eq(shares.chatId, chatId),
+  });
+}
+
+export async function createShareIfNotExists(data: NewShare) {
+  const [share] = await db
+    .insert(shares)
+    .values(data)
+    .onConflictDoNothing({ target: shares.chatId })
+    .returning();
+
+  if (share) {
+    return share;
+  }
+
+  return getShareByChatId(data.chatId);
+}
+
+export async function deleteShareByChatId(chatId: string) {
+  await db.delete(shares).where(eq(shares.chatId, chatId));
 }
 
 export async function getSessionsByUserId(userId: string) {
@@ -72,21 +98,65 @@ export async function getSessionsByUserId(userId: string) {
   });
 }
 
-export type SessionWithUnread = typeof sessions.$inferSelect & {
+type SessionSidebarFields = Pick<
+  typeof sessions.$inferSelect,
+  | "id"
+  | "title"
+  | "status"
+  | "repoName"
+  | "branch"
+  | "linesAdded"
+  | "linesRemoved"
+  | "prNumber"
+  | "prStatus"
+  | "createdAt"
+>;
+
+export type SessionWithUnread = SessionSidebarFields & {
   hasUnread: boolean;
   hasStreaming: boolean;
+  latestChatId: string | null;
+  lastActivityAt: Date;
+};
+
+type GetSessionsWithUnreadByUserIdOptions = {
+  status?: "all" | "active" | "archived";
+  limit?: number;
+  offset?: number;
 };
 
 /**
- * Returns all sessions for a user, each annotated with a `hasUnread` flag
+ * Returns sessions for a user, each annotated with a `hasUnread` flag
  * that is true when any chat in the session has unread assistant messages.
+ *
+ * The sidebar only needs lightweight fields, so we intentionally avoid
+ * selecting heavyweight JSON columns like `sandboxState` and `cachedDiff`.
  */
 export async function getSessionsWithUnreadByUserId(
   userId: string,
+  options?: GetSessionsWithUnreadByUserIdOptions,
 ): Promise<SessionWithUnread[]> {
-  const rows = await db
+  const status = options?.status ?? "all";
+  const statusFilter =
+    status === "active"
+      ? ne(sessions.status, "archived")
+      : status === "archived"
+        ? eq(sessions.status, "archived")
+        : undefined;
+
+  const baseQuery = db
     .select({
-      ...getTableColumns(sessions),
+      id: sessions.id,
+      title: sessions.title,
+      status: sessions.status,
+      repoName: sessions.repoName,
+      branch: sessions.branch,
+      linesAdded: sessions.linesAdded,
+      linesRemoved: sessions.linesRemoved,
+      prNumber: sessions.prNumber,
+      prStatus: sessions.prStatus,
+      createdAt: sessions.createdAt,
+      lastActivityAt: sql<Date>`COALESCE(MAX(${chats.updatedAt}), ${sessions.createdAt})`,
       hasUnread: sql<boolean>`COALESCE(BOOL_OR(
         CASE
           WHEN ${chats.lastAssistantMessageAt} IS NULL THEN false
@@ -96,6 +166,10 @@ export async function getSessionsWithUnreadByUserId(
         END
       ), false)`,
       hasStreaming: sql<boolean>`COALESCE(BOOL_OR(${chats.activeStreamId} IS NOT NULL), false)`,
+      latestChatId: sql<string | null>`(
+        ARRAY_AGG(${chats.id} ORDER BY ${chats.updatedAt} DESC, ${chats.createdAt} DESC)
+        FILTER (WHERE ${chats.id} IS NOT NULL)
+      )[1]`,
     })
     .from(sessions)
     .leftJoin(chats, eq(chats.sessionId, sessions.id))
@@ -103,11 +177,36 @@ export async function getSessionsWithUnreadByUserId(
       chatReads,
       and(eq(chatReads.chatId, chats.id), eq(chatReads.userId, userId)),
     )
-    .where(eq(sessions.userId, userId))
+    .where(
+      statusFilter
+        ? and(eq(sessions.userId, userId), statusFilter)
+        : eq(sessions.userId, userId),
+    )
     .groupBy(sessions.id)
     .orderBy(desc(sessions.createdAt));
 
+  const withOffset =
+    typeof options?.offset === "number" && options.offset > 0
+      ? baseQuery.offset(options.offset)
+      : baseQuery;
+
+  const rows =
+    typeof options?.limit === "number"
+      ? await withOffset.limit(options.limit)
+      : await withOffset;
+
   return rows;
+}
+
+export async function getArchivedSessionCountByUserId(
+  userId: string,
+): Promise<number> {
+  const [result] = await db
+    .select({ count: sql<number>`COUNT(*)::int` })
+    .from(sessions)
+    .where(and(eq(sessions.userId, userId), eq(sessions.status, "archived")));
+
+  return result?.count ?? 0;
 }
 
 /**
@@ -155,13 +254,13 @@ export async function getChatById(chatId: string) {
 }
 
 /**
- * Get all chats for a session, ordered by newest first.
- * This ordering is intentional - UI lists show newest at the top.
+ * Get all chats for a session, ordered by most recent activity first.
+ * Activity is tracked on chats.updatedAt and updated when new messages arrive.
  */
 export async function getChatsBySessionId(sessionId: string) {
   return db.query.chats.findMany({
     where: eq(chats.sessionId, sessionId),
-    orderBy: [desc(chats.createdAt)],
+    orderBy: [desc(chats.updatedAt), desc(chats.createdAt)],
   });
 }
 
@@ -203,7 +302,7 @@ export async function getChatSummariesBySessionId(
       and(eq(chatReads.chatId, chats.id), eq(chatReads.userId, userId)),
     )
     .where(eq(chats.sessionId, sessionId))
-    .orderBy(desc(chats.createdAt));
+    .orderBy(desc(chats.updatedAt), desc(chats.createdAt));
 
   return rows;
 }
@@ -215,6 +314,15 @@ export async function updateChat(
   const [chat] = await db
     .update(chats)
     .set({ ...data, updatedAt: new Date() })
+    .where(eq(chats.id, chatId))
+    .returning();
+  return chat;
+}
+
+export async function touchChat(chatId: string, activityAt = new Date()) {
+  const [chat] = await db
+    .update(chats)
+    .set({ updatedAt: activityAt })
     .where(eq(chats.id, chatId))
     .returning();
   return chat;
@@ -363,6 +471,77 @@ export async function getChatMessages(chatId: string) {
   return db.query.chatMessages.findMany({
     where: eq(chatMessages.chatId, chatId),
     orderBy: [chatMessages.createdAt, chatMessages.id],
+  });
+}
+
+type DeleteChatMessageAndFollowingResult =
+  | { status: "not_found" }
+  | { status: "not_user_message" }
+  | { status: "deleted"; deletedMessageIds: string[] };
+
+export async function deleteChatMessageAndFollowing(
+  chatId: string,
+  messageId: string,
+): Promise<DeleteChatMessageAndFollowingResult> {
+  return db.transaction(async (tx) => {
+    const orderedMessages = await tx
+      .select({
+        id: chatMessages.id,
+        role: chatMessages.role,
+      })
+      .from(chatMessages)
+      .where(eq(chatMessages.chatId, chatId))
+      .orderBy(chatMessages.createdAt, chatMessages.id);
+
+    const startIndex = orderedMessages.findIndex(
+      (message) => message.id === messageId,
+    );
+    if (startIndex < 0) {
+      return { status: "not_found" };
+    }
+
+    const targetMessage = orderedMessages[startIndex];
+    if (!targetMessage || targetMessage.role !== "user") {
+      return { status: "not_user_message" };
+    }
+
+    const idsToDelete = orderedMessages
+      .slice(startIndex)
+      .map((message) => message.id);
+
+    await tx
+      .delete(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.chatId, chatId),
+          inArray(chatMessages.id, idsToDelete),
+        ),
+      );
+
+    const [latestAssistantMessage] = await tx
+      .select({ createdAt: chatMessages.createdAt })
+      .from(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.chatId, chatId),
+          eq(chatMessages.role, "assistant"),
+        ),
+      )
+      .orderBy(desc(chatMessages.createdAt), desc(chatMessages.id))
+      .limit(1);
+
+    await tx
+      .update(chats)
+      .set({
+        lastAssistantMessageAt: latestAssistantMessage?.createdAt ?? null,
+        updatedAt: new Date(),
+      })
+      .where(eq(chats.id, chatId));
+
+    return {
+      status: "deleted",
+      deletedMessageIds: idsToDelete,
+    };
   });
 }
 

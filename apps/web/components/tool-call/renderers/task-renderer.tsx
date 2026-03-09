@@ -1,8 +1,7 @@
 "use client";
 
-import type { SubagentUIMessage } from "@open-harness/agent";
+import type { TaskPendingToolCall } from "@open-harness/agent";
 import { formatTokens, toRelativePath } from "@open-harness/shared";
-import { getToolName, isTextUIPart, isToolUIPart } from "ai";
 import { Loader2 } from "lucide-react";
 import type React from "react";
 import { useState } from "react";
@@ -11,82 +10,49 @@ import { DEFAULT_WORKING_DIRECTORY } from "@/lib/sandbox/config";
 import { cn } from "@/lib/utils";
 import { ApprovalButtons } from "../approval-buttons";
 
-type SubagentMessagePart = SubagentUIMessage["parts"][number];
-
-type KeyedSubagentPart = {
-  part: SubagentMessagePart;
-  renderKey: string;
-};
-
-function getRelevantPartRenderEntries(
-  messageParts: SubagentMessagePart[],
-): KeyedSubagentPart[] {
-  const entries: KeyedSubagentPart[] = [];
-  let textOrdinal = 0;
-  let toolOrdinal = 0;
-
-  for (const part of messageParts) {
-    if (isToolUIPart(part)) {
-      entries.push({
-        part,
-        renderKey: part.toolCallId ?? `tool:${part.type}:${toolOrdinal}`,
-      });
-      toolOrdinal += 1;
-      continue;
+function getToolSummary(toolCall: TaskPendingToolCall): string {
+  const input = toolCall.input as Record<string, unknown> | undefined;
+  switch (toolCall.name) {
+    case "read":
+    case "write":
+    case "edit": {
+      const fp = input?.filePath ?? "";
+      return fp ? toRelativePath(String(fp), DEFAULT_WORKING_DIRECTORY) : "";
     }
-
-    if (isTextUIPart(part)) {
-      entries.push({
-        part,
-        renderKey: `text:${textOrdinal}`,
-      });
-      textOrdinal += 1;
-    }
-  }
-
-  return entries;
-}
-
-function getToolSummary(part: SubagentMessagePart): string {
-  switch (part.type) {
-    case "tool-read":
-    case "tool-write":
-    case "tool-edit": {
-      const fp = part.input?.filePath ?? "";
-      return fp ? toRelativePath(fp, DEFAULT_WORKING_DIRECTORY) : "";
-    }
-    case "tool-grep":
-    case "tool-glob":
-      return part.input?.pattern ? `"${part.input.pattern}"` : "";
-    case "tool-bash":
-      return part.input?.command ?? "";
+    case "grep":
+    case "glob":
+      return input?.pattern ? `"${input.pattern}"` : "";
+    case "bash":
+      return input?.command ? String(input.command) : "";
     default:
       return "";
   }
 }
 
+function countToolCalls(messages: unknown): number {
+  if (!Array.isArray(messages)) return 0;
+  return messages.filter(
+    (m) =>
+      typeof m === "object" &&
+      m !== null &&
+      (m as { role?: string }).role === "tool",
+  ).length;
+}
+
 function SubagentToolCall({
-  part,
+  toolCall,
+  isRunning,
   expanded = false,
 }: {
-  part: SubagentMessagePart;
+  toolCall: TaskPendingToolCall;
+  isRunning: boolean;
   expanded?: boolean;
 }) {
-  if (!isToolUIPart(part)) return null;
+  const summary = getToolSummary(toolCall);
 
-  const toolName = getToolName(part);
-  const isRunning =
-    part.state === "input-streaming" || part.state === "input-available";
-  const hasError = part.state === "output-error";
-
-  const summary = getToolSummary(part);
-
-  const dotColor = isRunning
-    ? "bg-yellow-500"
-    : hasError
-      ? "bg-red-500"
-      : "bg-green-500";
-  const displayName = toolName.charAt(0).toUpperCase() + toolName.slice(1);
+  const dotColor = isRunning ? "bg-yellow-500" : "bg-green-500";
+  const displayName =
+    toolCall.name.charAt(0).toUpperCase() + toolCall.name.slice(1);
 
   return (
     <div className="border-l-2 border-border py-1 pl-3">
@@ -120,14 +86,11 @@ function SubagentToolCall({
             <span className="text-sm text-muted-foreground">)</span>
           </>
         )}
-        {hasError ? (
-          <span className="text-sm text-red-500"> - error</span>
-        ) : null}
       </div>
       {/* Show full input in expanded mode */}
       {expanded && (
         <pre className="ml-4 mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-xs text-foreground">
-          {JSON.stringify(part.input, null, 2)}
+          {JSON.stringify(toolCall.input, null, 2)}
         </pre>
       )}
     </div>
@@ -141,6 +104,7 @@ export function TaskRenderer({
   onDeny,
 }: ToolRendererProps<"tool-task">) {
   const [isExpanded, setIsExpanded] = useState(false);
+
   const input = part.input;
   const desc = input?.task ?? "Spawning subagent";
   const fullPrompt = input?.instructions;
@@ -151,19 +115,13 @@ export function TaskRenderer({
 
   const hasOutput = part.state === "output-available";
   const isPreliminary = hasOutput && part.preliminary === true;
-  const message = hasOutput ? part.output : undefined;
-
-  const messageParts = message?.parts ?? [];
-  const relevantPartEntries = getRelevantPartRenderEntries(messageParts);
-  const relevantParts = relevantPartEntries.map((entry) => entry.part);
-  const toolParts = messageParts.filter(isToolUIPart);
-  const textParts = messageParts.filter(isTextUIPart);
-
-  const maxVisible = 4;
-  const hiddenCount = Math.max(0, relevantPartEntries.length - maxVisible);
-  const visibleParts = relevantPartEntries.slice(-maxVisible);
-
   const isComplete = hasOutput && !isPreliminary;
+  const output = hasOutput ? part.output : undefined;
+
+  const pendingToolCall = output?.pending ?? null;
+  const toolCount =
+    output?.toolCallCount ?? (isComplete ? countToolCalls(output?.final) : 0);
+
   const isTaskStreaming = hasOutput && isPreliminary;
 
   // Compute running states using state.interrupted from shared extractRenderState
@@ -194,11 +152,11 @@ export function TaskRenderer({
           ? "General"
           : "Task";
 
-  // Has expandable content if there are tool parts or the prompt is long
+  // Has expandable content if there's a pending tool call or the prompt is long
   const hasExpandableContent =
-    toolParts.length > 0 ||
+    pendingToolCall !== null ||
     (fullPrompt && fullPrompt.length > 80) ||
-    textParts.length > 0;
+    isComplete;
 
   const handleClick = () => {
     if (hasExpandableContent) {
@@ -279,38 +237,17 @@ export function TaskRenderer({
         </div>
       )}
 
-      {/* Collapsed view - show last 4 parts */}
-      {!isExpanded && hasOutput && visibleParts.length > 0 && (
+      {/* Collapsed view - show current pending tool call */}
+      {!isExpanded && pendingToolCall && (
         <div className="mt-3 space-y-1 pl-3">
-          {hiddenCount > 0 && (
-            <div className="text-sm text-muted-foreground">
-              ... {hiddenCount} more above
-            </div>
-          )}
-          {visibleParts.map(({ part: p, renderKey }) => {
-            if (isToolUIPart(p)) {
-              return <SubagentToolCall key={renderKey} part={p} />;
-            }
-            if (isTextUIPart(p)) {
-              const text = p.text?.trim() ?? "";
-              if (!text) return null;
-              const truncated =
-                text.length > 80 ? text.slice(0, 80) + "..." : text;
-              return (
-                <div
-                  key={renderKey}
-                  className="border-l-2 border-border py-1 pl-3 text-sm text-muted-foreground"
-                >
-                  {truncated}
-                </div>
-              );
-            }
-            return null;
-          })}
+          <SubagentToolCall
+            toolCall={pendingToolCall}
+            isRunning={isPreliminary}
+          />
         </div>
       )}
 
-      {/* Expanded view - show all parts with full details */}
+      {/* Expanded view - show prompt and current tool call details */}
       {isExpanded && (
         <div className="mt-3 space-y-3 border-t border-border pt-3">
           {/* Full prompt */}
@@ -335,34 +272,17 @@ export function TaskRenderer({
             </div>
           )}
 
-          {/* All tool calls */}
-          {relevantParts.length > 0 && (
+          {/* Current tool call */}
+          {pendingToolCall && (
             <div>
               <div className="mb-1 text-xs font-medium text-muted-foreground">
-                Tool Calls ({toolParts.length})
+                Current Tool Call
               </div>
-              <div className="max-h-96 space-y-1 overflow-auto">
-                {relevantPartEntries.map(({ part: p, renderKey }) => {
-                  if (isToolUIPart(p)) {
-                    return (
-                      <SubagentToolCall key={renderKey} part={p} expanded />
-                    );
-                  }
-                  if (isTextUIPart(p)) {
-                    const text = p.text?.trim() ?? "";
-                    if (!text) return null;
-                    return (
-                      <div
-                        key={renderKey}
-                        className="border-l-2 border-border py-1 pl-3 text-sm text-muted-foreground"
-                      >
-                        {text}
-                      </div>
-                    );
-                  }
-                  return null;
-                })}
-              </div>
+              <SubagentToolCall
+                toolCall={pendingToolCall}
+                isRunning={isPreliminary}
+                expanded
+              />
             </div>
           )}
         </div>
@@ -370,9 +290,9 @@ export function TaskRenderer({
 
       {!isExpanded && isComplete && (
         <div className="mt-2 pl-5 text-sm text-muted-foreground">
-          Complete ({toolParts.length} tool calls
-          {message?.metadata?.totalMessageUsage?.inputTokens
-            ? `, ${formatTokens(message.metadata.totalMessageUsage.inputTokens)} tokens`
+          Complete ({toolCount} tool calls
+          {output?.usage?.inputTokens
+            ? `, ${formatTokens(output.usage.inputTokens)} tokens`
             : ""}
           )
         </div>

@@ -20,6 +20,7 @@ import type { DiffResponse } from "@/app/api/sessions/[sessionId]/diff/route";
 import type { FileSuggestion } from "@/app/api/sessions/[sessionId]/files/route";
 import type { SkillSuggestion } from "@/app/api/sessions/[sessionId]/skills/route";
 import type { WebAgentUIMessage } from "@/app/types";
+import { useModelOptions } from "@/hooks/use-model-options";
 import { useSessionDiff } from "@/hooks/use-session-diff";
 import { useSessionFiles } from "@/hooks/use-session-files";
 import {
@@ -31,9 +32,10 @@ import { AbortableChatTransport } from "@/lib/abortable-chat-transport";
 import {
   abortChatInstanceTransport,
   getOrCreateChatInstance,
-  removeChatInstance,
 } from "@/lib/chat-instance-manager";
+import { cleanupChatRouteOnUnmount } from "@/lib/chat-route-cleanup";
 import type { Chat, Session } from "@/lib/db/schema";
+import { type ModelOption, withMissingModelOption } from "@/lib/model-options";
 
 const KNOWN_SANDBOX_TYPES = ["just-bash", "vercel", "hybrid"] as const;
 type KnownSandboxType = (typeof KNOWN_SANDBOX_TYPES)[number];
@@ -101,14 +103,41 @@ export type LifecycleTimingInfo = {
 
 export type SandboxStatusSyncResult = "active" | "no_sandbox" | "unknown";
 
+type RetryChatStreamOptions = {
+  auto?: boolean;
+  strategy?: "hard" | "soft";
+};
+
 function toMs(value: Date | null | undefined): number | null {
   return value ? value.getTime() : null;
+}
+
+function toPositiveInteger(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : null;
+}
+
+function resolveContextLimitForModel(
+  modelOptions: ModelOption[] | undefined,
+  modelId: string | null | undefined,
+): number | null {
+  if (!modelOptions || !modelId) {
+    return null;
+  }
+
+  const selectedModel = modelOptions.find((model) => model.id === modelId);
+  return toPositiveInteger(selectedModel?.contextWindow);
 }
 
 type SessionChatContextValue = {
   session: Session;
   chatInfo: Chat;
   chat: UseChatHelpers<WebAgentUIMessage>;
+  contextLimit: number | null;
   stopChatStream: () => void;
   sandboxInfo: SandboxInfo | null;
   setSandboxInfo: (info: SandboxInfo) => void;
@@ -181,6 +210,8 @@ type SessionChatContextValue = {
   syncSandboxStatus: () => Promise<SandboxStatusSyncResult>;
   /** Attempt to reconnect to an existing sandbox */
   attemptReconnection: () => Promise<ReconnectionStatus>;
+  /** Clear a transient chat error and attempt to resume an active stream */
+  retryChatStream: (opts?: RetryChatStreamOptions) => void;
   /** Update session repo info after creating a repo */
   updateSessionRepo: (info: {
     cloneUrl: string;
@@ -195,6 +226,10 @@ type SessionChatContextValue = {
   }) => void;
   /** Check sandbox branch and look for existing PRs, persisting to DB */
   checkBranchAndPr: () => Promise<void>;
+  /** Available model options (base models + variants) */
+  modelOptions: ModelOption[];
+  /** Whether model options are still loading */
+  modelOptionsLoading: boolean;
 };
 
 const SessionChatContext = createContext<SessionChatContextValue | undefined>(
@@ -249,6 +284,7 @@ type SessionChatProviderProps = {
   session: Session;
   chat: Chat;
   initialMessages: WebAgentUIMessage[];
+  initialModelOptions: ModelOption[];
   children: ReactNode;
 };
 
@@ -260,6 +296,7 @@ export function SessionChatProvider({
   session: initialSession,
   chat: initialChat,
   initialMessages,
+  initialModelOptions,
   children,
 }: SessionChatProviderProps) {
   const { mutate } = useSWRConfig();
@@ -269,6 +306,27 @@ export function SessionChatProvider({
   const [hasSnapshotState, setHasSnapshotState] = useState<boolean>(
     !!initialSession.snapshotUrl,
   );
+  const {
+    modelOptions: baseModelOptions,
+    loading: modelOptionsLoadingFromApi,
+  } = useModelOptions({
+    initialModelOptions,
+  });
+  const modelOptions = useMemo(
+    () => withMissingModelOption(baseModelOptions, chatInfo.modelId),
+    [baseModelOptions, chatInfo.modelId],
+  );
+  const modelOptionsLoading =
+    modelOptions.length === 0 && modelOptionsLoadingFromApi;
+  const contextLimit = useMemo(
+    () => resolveContextLimitForModel(modelOptions, chatInfo.modelId ?? null),
+    [modelOptions, chatInfo.modelId],
+  );
+  const contextLimitRef = useRef<number | null>(contextLimit);
+
+  useEffect(() => {
+    contextLimitRef.current = contextLimit;
+  }, [contextLimit]);
 
   const transport = useMemo(
     () =>
@@ -279,16 +337,26 @@ export function SessionChatProvider({
           body,
           headers,
           credentials,
-        }) => ({
-          body: {
-            ...(typeof body === "object" && body ? body : {}),
-            messages,
-            sessionId: sessionRecord.id,
-            chatId: chatInfo.id,
-          },
-          headers,
-          credentials,
-        }),
+        }) => {
+          const requestContextLimit = contextLimitRef.current;
+          return {
+            body: {
+              ...(typeof body === "object" && body ? body : {}),
+              messages,
+              sessionId: sessionRecord.id,
+              chatId: chatInfo.id,
+              ...(requestContextLimit !== null
+                ? {
+                    context: {
+                      contextLimit: requestContextLimit,
+                    },
+                  }
+                : {}),
+            },
+            headers,
+            credentials,
+          };
+        },
         prepareReconnectToStreamRequest: async ({ id, ...request }) => ({
           ...request,
           api: `/api/chat/${encodeURIComponent(id)}/stream`,
@@ -299,7 +367,7 @@ export function SessionChatProvider({
 
   const hadInitialMessages = initialMessages.length > 0;
 
-  const { instance: chatInstance } = useMemo(
+  const { instance: chatInstance, alreadyExisted } = useMemo(
     () =>
       getOrCreateChatInstance(chatInfo.id, {
         id: chatInfo.id,
@@ -311,7 +379,13 @@ export function SessionChatProvider({
     [chatInfo.id],
   );
 
+  // Track explicit user-initiated stops so auto-recovery doesn't immediately
+  // reconnect to the still-running server stream (the main cause of the
+  // "need to tap stop 3 times on iOS" bug).
+  const userStoppedRef = useRef(false);
+
   const stopChatStream = useCallback(() => {
+    userStoppedRef.current = true;
     void chatInstance.stop();
     abortChatInstanceTransport(chatInfo.id);
     setChatInfo((previous) => ({ ...previous, activeStreamId: null }));
@@ -332,33 +406,80 @@ export function SessionChatProvider({
       });
   }, [chatInfo.id, chatInstance]);
 
+  // Compute resume only once on mount. If this tracks `chatInstance.status`
+  // reactively, transient ready/submitted transitions during tool loops can
+  // retrigger `resumeStream()` and replay recent chunks on top of the live
+  // stream, causing visible jank.
+  const shouldResumeOnMountRef = useRef(
+    !!initialChat.activeStreamId &&
+      (!alreadyExisted ||
+        chatInstance.status === "ready" ||
+        chatInstance.status === "error"),
+  );
+
   const chat = useChat<WebAgentUIMessage>({
     chat: chatInstance,
-    resume: Boolean(chatInfo.activeStreamId),
+    resume: shouldResumeOnMountRef.current,
     experimental_throttle: CHAT_UI_UPDATE_THROTTLE_MS,
   });
 
-  // Cleanup: always release chat instances when leaving a route.
-  // If this chat is still streaming or submitted, stop local stream processing
-  // so background chats do not consume render/CPU budget in this tab.
-  // Including "submitted" is important: when the user navigates away
-  // immediately after sending a message, the status is still "submitted"
-  // (the POST hasn't started returning data yet). Without stopping in this
-  // state, the Chat instance's internal state machine is never reset, which
-  // can leave the UI stuck showing a "Thinking..." indicator on re-entry.
-  // Also abort any in-flight transport fetch connection for this chat.
+  /**
+   * Clear a transient chat error (e.g. iOS "Load failed") and attempt to
+   * resume the server-side stream if one is still active.
+   *
+   * When called from a manual "Retry" button we always want to reconnect, so
+   * the stopped flag is reset.  When called from the automatic
+   * visibility-change / online recovery handler, the flag is checked first so
+   * that a user-initiated stop is respected and the stream is not silently
+   * restarted.
+   */
+  const retryChatStream = useCallback(
+    (opts?: RetryChatStreamOptions) => {
+      const strategy = opts?.strategy ?? "hard";
+      // If the user explicitly stopped the stream, don't auto-reconnect.
+      // This prevents the "tap stop 3 times" loop on iOS where aborting the
+      // transport causes a transient error that the auto-recovery immediately
+      // reconnects.
+      if (opts?.auto && userStoppedRef.current) {
+        // Still clear the error so the UI doesn't show a stale error banner.
+        chat.clearError();
+        return;
+      }
+      // Manual retry — reset the flag so the stream can proceed.
+      userStoppedRef.current = false;
+      if (strategy === "hard") {
+        // Tear down any stale local fetch before reconnecting.
+        void chatInstance.stop();
+        abortChatInstanceTransport(chatInfo.id);
+      }
+      // Clear the error so the chat UI becomes visible again.
+      chat.clearError();
+      // If the server-side stream is still running, reconnect to it.
+      void chat.resumeStream();
+    },
+    [chat, chatInfo.id, chatInstance],
+  );
+
+  // Reset the user-stopped flag when a new message is sent so that
+  // auto-recovery works normally for the new stream.
+  useEffect(() => {
+    if (chat.status === "submitted") {
+      userStoppedRef.current = false;
+    }
+  }, [chat.status]);
+
+  // Cleanup: release per-route chat instances and abort local transport
+  // connections so unmounted routes do not keep consuming client resources.
+  //
+  // Important: do NOT call chatInstance.stop() during route teardown.
+  // stop() publishes a server stop signal; when users leave the page during
+  // long-running tool/subagent work that would cancel generation and drop
+  // persistence. We only stop explicitly via the UI stop action.
   useEffect(() => {
     return () => {
-      if (
-        chatInstance.status === "streaming" ||
-        chatInstance.status === "submitted"
-      ) {
-        void chatInstance.stop();
-      }
-      abortChatInstanceTransport(chatInfo.id);
-      removeChatInstance(chatInfo.id);
+      cleanupChatRouteOnUnmount(chatInfo.id);
     };
-  }, [chatInfo.id, chatInstance]);
+  }, [chatInfo.id]);
 
   const [sandboxInfo, setSandboxInfoState] = useState<SandboxInfo | null>(
     () => sandboxInfoCache.get(sessionId) ?? null,
@@ -666,6 +787,7 @@ export function SessionChatProvider({
         (current) =>
           current
             ? {
+                ...current,
                 sessions: current.sessions.map((s) =>
                   s.id === sessionId
                     ? {
@@ -719,6 +841,7 @@ export function SessionChatProvider({
         (current) =>
           current
             ? {
+                ...current,
                 sessions: current.sessions.map((s) =>
                   s.id === sessionId
                     ? {
@@ -741,6 +864,23 @@ export function SessionChatProvider({
     sessionRecord.repoName,
     mutate,
     sessionId,
+  ]);
+
+  // When entering a session on a branch that already has a PR, hydrate PR
+  // metadata as soon as we know the sandbox is connected so the header action
+  // reflects existing PR state immediately.
+  useEffect(() => {
+    if (sessionRecord.prNumber != null) return;
+    if (!sessionRecord.repoOwner || !sessionRecord.repoName) return;
+    if (reconnectionStatus !== "connected") return;
+
+    void checkBranchAndPr();
+  }, [
+    sessionRecord.prNumber,
+    sessionRecord.repoOwner,
+    sessionRecord.repoName,
+    reconnectionStatus,
+    checkBranchAndPr,
   ]);
 
   const updateSessionSnapshot = useCallback(
@@ -861,6 +1001,7 @@ export function SessionChatProvider({
       (current) =>
         current
           ? {
+              ...current,
               sessions: current.sessions.map((s) =>
                 s.id === sessionRecord.id
                   ? { ...optimisticSession, hasUnread: s.hasUnread }
@@ -886,6 +1027,7 @@ export function SessionChatProvider({
         (current) =>
           current
             ? {
+                ...current,
                 sessions: current.sessions.map((s) =>
                   s.id === sessionRecord.id
                     ? { ...previousSession, hasUnread: s.hasUnread }
@@ -905,6 +1047,7 @@ export function SessionChatProvider({
       (current) =>
         current
           ? {
+              ...current,
               sessions: current.sessions.map((s) =>
                 s.id === sessionRecord.id
                   ? { ...nextSession, hasUnread: s.hasUnread }
@@ -912,7 +1055,7 @@ export function SessionChatProvider({
               ),
             }
           : current,
-      { revalidate: false },
+      { revalidate: true },
     );
   }, [sessionRecord, mutate]);
 
@@ -943,6 +1086,7 @@ export function SessionChatProvider({
       (current) =>
         current
           ? {
+              ...current,
               sessions: current.sessions.map((s) =>
                 s.id === sessionRecord.id
                   ? { ...nextSession, hasUnread: s.hasUnread }
@@ -950,7 +1094,7 @@ export function SessionChatProvider({
               ),
             }
           : current,
-      { revalidate: false },
+      { revalidate: true },
     );
   }, [sessionRecord, mutate]);
 
@@ -968,11 +1112,23 @@ export function SessionChatProvider({
         throw new Error(data.error ?? "Failed to update session title");
       }
 
-      if (data.session) {
-        setSessionRecord(data.session);
-      }
+      const nextSession = data.session ?? { ...sessionRecord, title };
+      setSessionRecord(nextSession);
+      await mutate<SessionsResponse>(
+        "/api/sessions",
+        (current) =>
+          current
+            ? {
+                ...current,
+                sessions: current.sessions.map((s) =>
+                  s.id === sessionRecord.id ? { ...s, ...nextSession } : s,
+                ),
+              }
+            : current,
+        { revalidate: false },
+      );
     },
-    [sessionRecord.id],
+    [sessionRecord, mutate],
   );
 
   const updateChatModel = useCallback(
@@ -1001,7 +1157,9 @@ export function SessionChatProvider({
       session: sessionRecord,
       chatInfo,
       chat,
+      contextLimit,
       stopChatStream,
+      retryChatStream,
       sandboxInfo,
       setSandboxInfo,
       clearSandboxInfo,
@@ -1044,12 +1202,16 @@ export function SessionChatProvider({
       updateSessionRepo,
       updateSessionPullRequest,
       checkBranchAndPr,
+      modelOptions,
+      modelOptionsLoading,
     }),
     [
       sessionRecord,
       chatInfo,
       chat,
+      contextLimit,
       stopChatStream,
+      retryChatStream,
       sandboxInfo,
       setSandboxInfo,
       clearSandboxInfo,
@@ -1092,6 +1254,8 @@ export function SessionChatProvider({
       updateSessionRepo,
       updateSessionPullRequest,
       checkBranchAndPr,
+      modelOptions,
+      modelOptionsLoading,
     ],
   );
 

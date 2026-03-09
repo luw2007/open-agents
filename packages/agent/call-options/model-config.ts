@@ -1,6 +1,24 @@
-import type { GatewayModelId, LanguageModel } from "ai";
+import type { GatewayModelId, JSONValue, LanguageModel } from "ai";
 import { z } from "zod";
-import { gateway, type GatewayOptions } from "../models";
+import {
+  gateway,
+  type GatewayOptions,
+  type ProviderOptionsByProvider,
+} from "../models";
+
+const jsonValueSchema: z.ZodType<JSONValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(jsonValueSchema),
+    z.record(z.string(), jsonValueSchema),
+  ]),
+);
+
+const providerOptionsOverridesSchema: z.ZodType<ProviderOptionsByProvider> =
+  z.record(z.string(), z.record(z.string(), jsonValueSchema));
 
 const gatewayOptionsSchema = z.object({
   devtools: z.boolean().optional(),
@@ -10,6 +28,7 @@ const gatewayOptionsSchema = z.object({
       apiKey: z.string(),
     })
     .optional(),
+  providerOptionsOverrides: providerOptionsOverridesSchema.optional(),
 });
 
 export const modelConfigSchema = z.object({

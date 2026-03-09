@@ -51,7 +51,7 @@ export default async function SessionLayout({
       defaultModelId: preferences.defaultModelId,
     };
   } catch (error) {
-    console.error("Failed to prefetch sidebar chats:", error);
+    console.error("Failed to prefetch session chat data:", error);
   }
 
   return (

@@ -7,6 +7,7 @@ import {
   Link2,
   Menu,
   Settings as SettingsIcon,
+  SlidersHorizontal,
   User,
 } from "lucide-react";
 import Link from "next/link";
@@ -21,6 +22,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { AccountsSectionSkeleton } from "./accounts-section";
+import { ModelVariantsSectionSkeleton } from "./model-variants-section";
 import { PreferencesSectionSkeleton } from "./preferences-section";
 import { ProfileSectionSkeleton } from "./profile-section";
 import { TokensSectionSkeleton } from "./tokens-section";
@@ -38,6 +40,12 @@ const sidebarItems = [
     label: "Preferences",
     href: "/settings/preferences",
     icon: SettingsIcon,
+  },
+  {
+    id: "model-variants",
+    label: "Model Variants",
+    href: "/settings/model-variants",
+    icon: SlidersHorizontal,
   },
   {
     id: "tokens",
@@ -101,7 +109,7 @@ function SettingsLayout({
         <div className="flex h-full w-full flex-col">
           <div className="flex items-center gap-4 px-6 py-4">
             <Link
-              href="/"
+              href="/sessions"
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -125,7 +133,7 @@ function SettingsLayout({
           </SheetHeader>
           <div className="flex items-center gap-4 px-6 py-4">
             <Link
-              href="/"
+              href="/sessions"
               onClick={() => setMobileSidebarOpen(false)}
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
             >
@@ -172,6 +180,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const fallbackContent =
     activeItem?.id === "preferences" ? (
       <PreferencesSectionSkeleton />
+    ) : activeItem?.id === "model-variants" ? (
+      <ModelVariantsSectionSkeleton />
     ) : activeItem?.id === "tokens" ? (
       <TokensSectionSkeleton />
     ) : activeItem?.id === "accounts" ? (

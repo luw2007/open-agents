@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Toaster } from "sonner";
+import { Analytics } from "@vercel/analytics/next";
 import { Providers } from "./providers";
 import "./globals.css";
 
@@ -14,12 +14,43 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const themeInitializationScript = `
+(() => {
+  const storageKey = "open-harness-theme";
+  const darkModeMediaQuery = "(prefers-color-scheme: dark)";
+  const storedTheme = window.localStorage.getItem(storageKey);
+
+  const theme =
+    storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
+      ? storedTheme
+      : "system";
+
+  const resolvedTheme =
+    theme === "system"
+      ? window.matchMedia(darkModeMediaQuery).matches
+        ? "dark"
+        : "light"
+      : theme;
+
+  document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
+})();
+`;
+
+const isPreviewDeployment = process.env.VERCEL_ENV === "preview";
+const faviconPath = isPreviewDeployment
+  ? "/favicon-preview.svg"
+  : "/favicon.ico";
+
 export const metadata: Metadata = {
   title: {
     default: "Open Harness",
     template: "%s | Open Harness",
   },
   description: "Open Harness web app for managing AI coding sessions.",
+  icons: {
+    icon: faviconPath,
+    shortcut: faviconPath,
+  },
 };
 
 export default function RootLayout({
@@ -28,12 +59,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} overflow-x-hidden antialiased`}
       >
+        <script
+          dangerouslySetInnerHTML={{ __html: themeInitializationScript }}
+        />
         <Providers>{children}</Providers>
-        <Toaster theme="dark" />
+        <Analytics />
       </body>
     </html>
   );

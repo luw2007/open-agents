@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import useSWR from "swr";
+import { useMemo, useState } from "react";
+import { type ThemePreference, useTheme } from "@/app/providers";
 import {
   DEFAULT_SANDBOX_TYPE,
   type SandboxType,
@@ -21,24 +21,30 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ModelCombobox } from "@/components/model-combobox";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useModelOptions } from "@/hooks/use-model-options";
 import { useUserPreferences } from "@/hooks/use-user-preferences";
 import {
-  type AvailableModel,
-  DEFAULT_MODEL_ID,
-  getModelDisplayName,
-} from "@/lib/models";
-import { fetcher } from "@/lib/swr";
-
-interface ModelsResponse {
-  models: AvailableModel[];
-}
+  getDefaultModelOptionId,
+  withMissingModelOption,
+} from "@/lib/model-options";
 
 const SANDBOX_OPTIONS: Array<{ id: SandboxType; name: string }> = [
   { id: "hybrid", name: "Hybrid" },
   { id: "vercel", name: "Vercel" },
   { id: "just-bash", name: "Just Bash" },
 ];
+
+const THEME_OPTIONS: Array<{ id: ThemePreference; name: string }> = [
+  { id: "system", name: "System" },
+  { id: "light", name: "Light" },
+  { id: "dark", name: "Dark" },
+];
+
+function isThemePreference(value: string): value is ThemePreference {
+  return THEME_OPTIONS.some((option) => option.id === value);
+}
 
 export function PreferencesSectionSkeleton() {
   return (
@@ -51,6 +57,18 @@ export function PreferencesSectionSkeleton() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        <div className="grid gap-2">
+          <Label htmlFor="appearance">Appearance</Label>
+          <Select disabled>
+            <SelectTrigger id="appearance" className="w-full max-w-xs">
+              <Skeleton className="h-4 w-24" />
+            </SelectTrigger>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Choose between light and dark mode.
+          </p>
+        </div>
+
         <div className="grid gap-2">
           <Label htmlFor="model">Default Model</Label>
           <Select disabled>
@@ -80,14 +98,30 @@ export function PreferencesSectionSkeleton() {
 }
 
 export function PreferencesSection() {
+  const { theme, setTheme } = useTheme();
   const { preferences, loading, updatePreferences } = useUserPreferences();
-  const { data: modelsData, isLoading: modelsLoading } = useSWR<ModelsResponse>(
-    "/api/models",
-    fetcher,
-  );
+  const { modelOptions, loading: modelOptionsLoading } = useModelOptions();
   const [isSaving, setIsSaving] = useState(false);
 
-  const models = modelsData?.models ?? [];
+  const selectedDefaultModelId =
+    preferences?.defaultModelId ?? getDefaultModelOptionId(modelOptions);
+  const selectedSubagentModelId = preferences?.defaultSubagentModelId ?? "auto";
+
+  const defaultModelOptions = useMemo(
+    () => withMissingModelOption(modelOptions, selectedDefaultModelId),
+    [modelOptions, selectedDefaultModelId],
+  );
+  const subagentModelOptions = useMemo(
+    () =>
+      withMissingModelOption(modelOptions, preferences?.defaultSubagentModelId),
+    [modelOptions, preferences?.defaultSubagentModelId],
+  );
+
+  const handleThemeChange = (nextTheme: string) => {
+    if (isThemePreference(nextTheme)) {
+      setTheme(nextTheme);
+    }
+  };
 
   const handleModelChange = async (modelId: string) => {
     setIsSaving(true);
@@ -139,23 +173,41 @@ export function PreferencesSection() {
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="grid gap-2">
-          <Label htmlFor="model">Default Model</Label>
-          <Select
-            value={preferences?.defaultModelId ?? DEFAULT_MODEL_ID}
-            onValueChange={handleModelChange}
-            disabled={isSaving || modelsLoading}
-          >
-            <SelectTrigger id="model" className="w-full max-w-xs">
-              <SelectValue placeholder="Select a model" />
+          <Label htmlFor="appearance">Appearance</Label>
+          <Select value={theme} onValueChange={handleThemeChange}>
+            <SelectTrigger id="appearance" className="w-full max-w-xs">
+              <SelectValue placeholder="Select an appearance" />
             </SelectTrigger>
             <SelectContent>
-              {models.map((model) => (
-                <SelectItem key={model.id} value={model.id}>
-                  {getModelDisplayName(model)}
+              {THEME_OPTIONS.map((option) => (
+                <SelectItem key={option.id} value={option.id}>
+                  {option.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          <p className="text-xs text-muted-foreground">
+            Choose between light and dark mode. This preference is saved in your
+            current browser.
+          </p>
+        </div>
+
+        <div className="grid gap-2">
+          <Label htmlFor="model">Default Model</Label>
+          <ModelCombobox
+            value={selectedDefaultModelId}
+            items={defaultModelOptions.map((option) => ({
+              id: option.id,
+              label: option.label,
+              description: option.description,
+              isVariant: option.isVariant,
+            }))}
+            placeholder="Select a model"
+            searchPlaceholder="Search models..."
+            emptyText={modelOptionsLoading ? "Loading..." : "No models found."}
+            disabled={isSaving || modelOptionsLoading}
+            onChange={handleModelChange}
+          />
           <p className="text-xs text-muted-foreground">
             The AI model used for new chats.
           </p>
@@ -163,23 +215,23 @@ export function PreferencesSection() {
 
         <div className="grid gap-2">
           <Label htmlFor="subagent-model">Subagent Model</Label>
-          <Select
-            value={preferences?.defaultSubagentModelId ?? "auto"}
-            onValueChange={handleSubagentModelChange}
-            disabled={isSaving || modelsLoading}
-          >
-            <SelectTrigger id="subagent-model" className="w-full max-w-xs">
-              <SelectValue placeholder="Select a model" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="auto">Same as main model</SelectItem>
-              {models.map((model) => (
-                <SelectItem key={model.id} value={model.id}>
-                  {getModelDisplayName(model)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <ModelCombobox
+            value={selectedSubagentModelId}
+            items={[
+              { id: "auto", label: "Same as main model" },
+              ...subagentModelOptions.map((option) => ({
+                id: option.id,
+                label: option.label,
+                description: option.description,
+                isVariant: option.isVariant,
+              })),
+            ]}
+            placeholder="Select a model"
+            searchPlaceholder="Search models..."
+            emptyText={modelOptionsLoading ? "Loading..." : "No models found."}
+            disabled={isSaving || modelOptionsLoading}
+            onChange={handleSubagentModelChange}
+          />
           <p className="text-xs text-muted-foreground">
             The AI model used for explorer and executor subagents. Defaults to
             the main model if not set.

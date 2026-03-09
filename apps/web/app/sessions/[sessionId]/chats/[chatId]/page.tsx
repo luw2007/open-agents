@@ -4,6 +4,12 @@ import type { WebAgentUIMessage } from "@/app/types";
 import { DiffsProvider } from "@/components/diffs-provider";
 import { getChatById, getChatMessages } from "@/lib/db/sessions";
 import { getSessionByIdCached } from "@/lib/db/sessions-cache";
+import { getUserPreferences } from "@/lib/db/user-preferences";
+import {
+  buildSessionChatModelOptions,
+  withMissingModelOption,
+} from "@/lib/model-options";
+import { fetchAvailableLanguageModelsWithContext } from "@/lib/models-with-context";
 import { getServerSession } from "@/lib/session/get-server-session";
 import { SessionChatContent } from "./session-chat-content";
 import { SessionChatProvider } from "./session-chat-context";
@@ -24,6 +30,14 @@ function isOptimisticChatId(chatId: string): boolean {
 
 const OPTIMISTIC_CHAT_RETRY_DELAY_MS = 100;
 const OPTIMISTIC_CHAT_RETRY_ATTEMPTS = 50;
+
+async function getInitialModels() {
+  try {
+    return await fetchAvailableLanguageModelsWithContext();
+  } catch {
+    return [];
+  }
+}
 
 async function getChatByIdWithRetry(
   chatId: string,
@@ -82,24 +96,34 @@ export default async function SessionChatPage({
     redirect("/");
   }
 
-  // Fetch chat and messages in parallel
-  const [chat, dbMessages] = await Promise.all([
+  // Fetch chat, messages, models, and preferences in parallel
+  const [chat, dbMessages, initialModels, preferences] = await Promise.all([
     getChatByIdWithRetry(chatId, sessionId),
     getChatMessages(chatId),
+    getInitialModels(),
+    getUserPreferences(session.user.id),
   ]);
+
   if (!chat) {
     if (isOptimisticChatId(chatId)) {
       redirect(`/sessions/${sessionId}`);
     }
     notFound();
   }
+
   const initialMessages = dbMessages.map((m) => m.parts as WebAgentUIMessage);
+  const initialModelOptions = withMissingModelOption(
+    buildSessionChatModelOptions(initialModels, preferences.modelVariants),
+    chat.modelId,
+  );
+
   return (
     <DiffsProvider>
       <SessionChatProvider
         session={sessionRecord}
         chat={chat}
         initialMessages={initialMessages}
+        initialModelOptions={initialModelOptions}
       >
         <SessionChatContent />
       </SessionChatProvider>

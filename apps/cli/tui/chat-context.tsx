@@ -1,9 +1,5 @@
 import { Chat } from "@ai-sdk/react";
-import {
-  getContextLimit,
-  type GatewayConfig,
-  type SkillMetadata,
-} from "@open-harness/agent";
+import { type GatewayConfig, type SkillMetadata } from "@open-harness/agent";
 import { isToolUIPart, type LanguageModelUsage, type UIMessage } from "ai";
 import React, {
   createContext,
@@ -67,6 +63,7 @@ type ChatContextValue = {
 const ChatContext = createContext<ChatContextValue | undefined>(undefined);
 
 const AUTO_ACCEPT_MODES: AutoAcceptMode[] = ["off", "edits", "all"];
+const DEFAULT_CONTEXT_LIMIT = 200_000;
 
 /**
  * Custom predicate that handles both approval-based tools and client-side tools.
@@ -244,7 +241,7 @@ export function ChatProvider({
     if (typeof modelEntry?.contextLimit === "number") {
       return modelEntry.contextLimit;
     }
-    return getContextLimit(effectiveModel);
+    return DEFAULT_CONTEXT_LIMIT;
   }, [availableModels, effectiveModel]);
 
   const handleUsageUpdate = useCallback((newUsage: LanguageModelUsage) => {

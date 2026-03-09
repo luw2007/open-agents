@@ -1,7 +1,7 @@
 "use client";
 
 import type { AskUserQuestionInput, TaskToolUIPart } from "@open-harness/agent";
-import { isReasoningUIPart, isToolUIPart } from "ai";
+import { isReasoningUIPart, isToolUIPart, type FileUIPart } from "ai";
 import {
   Archive,
   ArchiveRestore,
@@ -9,18 +9,24 @@ import {
   ArrowUp,
   Check,
   Copy,
+  EllipsisVertical,
   ExternalLink,
   FolderGit2,
   GitCommit,
   GitCompare,
+  GitMerge,
   GitPullRequest,
   Link2,
   Loader2,
+  MessageSquareMore,
   Mic,
   Paperclip,
+  Plus,
   RefreshCw,
+  RotateCcw,
   Share2,
   Square,
+  Trash2,
   X,
 } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -33,6 +39,9 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import useSWR from "swr";
+import type { MergePullRequestResponse } from "@/app/api/sessions/[sessionId]/merge/route";
+import type { PrDeploymentResponse } from "@/app/api/sessions/[sessionId]/pr-deployment/route";
 import type {
   WebAgentUIMessage,
   WebAgentUIMessagePart,
@@ -57,6 +66,26 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { useSessionLayout } from "@/app/sessions/[sessionId]/session-layout-context";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
   Tooltip,
@@ -65,6 +94,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useAudioRecording } from "@/hooks/use-audio-recording";
 import { useFileSuggestions } from "@/hooks/use-file-suggestions";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useScrollToBottom } from "@/hooks/use-scroll-to-bottom";
 import { useSessionChats } from "@/hooks/use-session-chats";
@@ -74,7 +104,10 @@ import {
   shouldShowThinkingIndicator,
 } from "@/lib/chat-streaming-state";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
+import { DEFAULT_CONTEXT_LIMIT } from "@/lib/models";
+import { getPrDeploymentRefreshInterval } from "@/lib/pr-deployment-polling";
 import { DEFAULT_SANDBOX_TIMEOUT_MS } from "@/lib/sandbox/config";
+import { fetcher } from "@/lib/swr";
 import { streamdownPlugins } from "@/lib/streamdown-config";
 import { cn } from "@/lib/utils";
 import {
@@ -89,6 +122,10 @@ const DiffViewer = dynamic(
 );
 const CreatePRDialog = dynamic(
   () => import("@/components/create-pr-dialog").then((m) => m.CreatePRDialog),
+  { ssr: false },
+);
+const MergePrDialog = dynamic(
+  () => import("@/components/merge-pr-dialog").then((m) => m.MergePrDialog),
   { ssr: false },
 );
 const CommitDialog = dynamic(
@@ -106,13 +143,34 @@ const Streamdown = dynamic(
 );
 
 const CHAT_IN_FLIGHT_SETTLE_MS = 300;
-const STREAMDOWN_FADE_IN_ANIMATION = {
-  animation: "fadeIn",
-  duration: 250,
-  easing: "ease-out",
-} as const;
+const STREAM_RECOVERY_STALL_MS = 4_000;
+const STREAM_RECOVERY_MIN_INTERVAL_MS = 8_000;
 
 const emptySubscribe = () => () => {};
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isChatStreamingProbeResponse(value: unknown): value is {
+  chats: { id: string; isStreaming: boolean }[];
+} {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  const chats = value["chats"];
+  if (!Array.isArray(chats)) {
+    return false;
+  }
+
+  return chats.every(
+    (chat) =>
+      isObjectRecord(chat) &&
+      typeof chat["id"] === "string" &&
+      typeof chat["isStreaming"] === "boolean",
+  );
+}
 
 function useHasMounted() {
   return useSyncExternalStore(
@@ -120,6 +178,24 @@ function useHasMounted() {
     () => true,
     () => false,
   );
+}
+
+function formatRelativeTime(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60_000);
+  const diffHours = Math.floor(diffMs / 3_600_000);
+  const diffDays = Math.floor(diffMs / 86_400_000);
+
+  if (diffMins < 1) return "now";
+  if (diffMins < 60) return `${diffMins}m`;
+  if (diffHours < 24) return `${diffHours}h`;
+  if (diffDays < 7) return `${diffDays}d`;
+
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 type MessageRenderGroup =
@@ -460,12 +536,20 @@ function SandboxInputOverlay({
 
 function ShareDialog({
   sessionId,
+  chatId,
   initialShareId,
+  externalOpen,
+  onExternalOpenChange,
 }: {
   sessionId: string;
+  chatId: string;
   initialShareId: string | null;
+  externalOpen?: boolean;
+  onExternalOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = externalOpen ?? internalOpen;
+  const setOpen = onExternalOpenChange ?? setInternalOpen;
   const [shareId, setShareId] = useState(initialShareId);
   const [isLoading, setIsLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -485,13 +569,47 @@ function ShareDialog({
 
   const shareUrl = shareId && baseUrl ? `${baseUrl}/shared/${shareId}` : null;
 
+  useEffect(() => {
+    let active = true;
+    setShareId(initialShareId);
+    setCopied(false);
+    setError(null);
+
+    const loadShareId = async () => {
+      try {
+        const res = await fetch(
+          `/api/sessions/${sessionId}/chats/${chatId}/share`,
+        );
+        if (!res.ok) {
+          return;
+        }
+        const data = (await res.json()) as { shareId: string | null };
+        if (!active) {
+          return;
+        }
+        setShareId(data.shareId);
+      } catch {
+        // Ignore silent refresh errors in dialog state; user action still works.
+      }
+    };
+
+    void loadShareId();
+
+    return () => {
+      active = false;
+    };
+  }, [sessionId, chatId, initialShareId]);
+
   async function enableSharing() {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/share`, {
-        method: "POST",
-      });
+      const res = await fetch(
+        `/api/sessions/${sessionId}/chats/${chatId}/share`,
+        {
+          method: "POST",
+        },
+      );
       if (!res.ok) {
         setError("Failed to enable sharing");
         return;
@@ -509,9 +627,12 @@ function ShareDialog({
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/share`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/sessions/${sessionId}/chats/${chatId}/share`,
+        {
+          method: "DELETE",
+        },
+      );
       if (!res.ok) {
         setError("Failed to disable sharing");
         return;
@@ -533,43 +654,53 @@ function ShareDialog({
     });
   }
 
+  const isExternallyControlled = externalOpen !== undefined;
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="sm">
-          <Share2 className="h-4 w-4 md:mr-2" />
-          <span className="hidden md:inline">Share</span>
-        </Button>
-      </DialogTrigger>
+      {!isExternallyControlled && (
+        <DialogTrigger asChild>
+          <Button variant="ghost" size="sm">
+            <Share2 className="h-4 w-4 mr-2" />
+            Share
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>Share session</DialogTitle>
+          <DialogTitle>Share chat</DialogTitle>
           <DialogDescription>
-            Anyone with the link can view the conversation in read-only mode.
+            Anyone with the link can view this chat in read-only mode.
           </DialogDescription>
         </DialogHeader>
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
         {shareId ? (
           <>
-            <div className="flex items-center gap-2">
-              <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border bg-muted px-3 py-2 text-sm">
+            <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border bg-muted px-3 py-2 text-sm">
                 <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="truncate">{shareUrl}</span>
+                <span className="min-w-0 flex-1 truncate">{shareUrl}</span>
               </div>
               <Button
                 variant="outline"
-                size="icon"
+                size="sm"
                 onClick={copyLink}
-                className="shrink-0"
+                className="w-full sm:w-auto sm:shrink-0"
               >
                 {copied ? (
-                  <Check className="h-4 w-4" />
+                  <>
+                    <Check className="mr-2 h-4 w-4" />
+                    Copied
+                  </>
                 ) : (
-                  <Copy className="h-4 w-4" />
+                  <>
+                    <Copy className="mr-2 h-4 w-4" />
+                    Copy link
+                  </>
                 )}
               </Button>
             </div>
-            <DialogFooter className="flex-row justify-between sm:justify-between">
+            <DialogFooter className="sm:justify-between">
               <Button
                 variant="ghost"
                 size="sm"
@@ -610,26 +741,54 @@ function ShareDialog({
   );
 }
 
-export function SessionChatContent() {
+export function SessionChatContent(_props: unknown) {
   const router = useRouter();
+  const {
+    chats: mobileChats,
+    chatsLoading: mobileChatsLoading,
+    createChat: mobileCreateChat,
+    switchChat: mobileSwitchChat,
+  } = useSessionLayout();
   const [input, setInput] = useState("");
   const [isCreatingSandbox, setIsCreatingSandbox] = useState(false);
   const [isRestoringSnapshot, setIsRestoringSnapshot] = useState(false);
   const [isUnarchiving, setIsUnarchiving] = useState(false);
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
   const [prDialogOpen, setPrDialogOpen] = useState(false);
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
   const [showDiffPanel, setShowDiffPanel] = useState(false);
+  const [mobileArchiveDialogOpen, setMobileArchiveDialogOpen] = useState(false);
+  const [mobileShareOpen, setMobileShareOpen] = useState(false);
+  const [chatSwitcherOpen, setChatSwitcherOpen] = useState(false);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [copiedAssistantMessageId, setCopiedAssistantMessageId] = useState<
+    string | null
+  >(null);
   const hasMounted = useHasMounted();
+  const isMobile = useIsMobile();
+  const isIosDevice = useMemo(() => {
+    if (typeof navigator === "undefined") {
+      return false;
+    }
+
+    return (
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+    );
+  }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isMountedRef = useRef(true);
+  const copyResetTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
     };
   }, []);
   const {
@@ -649,6 +808,36 @@ export function SessionChatContent() {
       inputRef.current?.focus();
     }
   };
+
+  const handleCopyAssistantMessage = useCallback(
+    async (messageId: string, text: string) => {
+      const trimmedText = text.trim();
+      if (trimmedText.length === 0) {
+        return;
+      }
+
+      if (typeof navigator === "undefined" || !navigator.clipboard) {
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(trimmedText);
+        setCopiedAssistantMessageId(messageId);
+        if (copyResetTimeoutRef.current !== null) {
+          window.clearTimeout(copyResetTimeoutRef.current);
+        }
+        copyResetTimeoutRef.current = window.setTimeout(() => {
+          setCopiedAssistantMessageId((currentMessageId) =>
+            currentMessageId === messageId ? null : currentMessageId,
+          );
+          copyResetTimeoutRef.current = null;
+        }, 2000);
+      } catch (copyError) {
+        console.error("Failed to copy assistant message:", copyError);
+      }
+    },
+    [],
+  );
 
   // Auto-resize textarea up to 3 lines
   useEffect(() => {
@@ -694,13 +883,16 @@ export function SessionChatContent() {
     session,
     chatInfo,
     chat,
+    contextLimit,
     stopChatStream,
+    retryChatStream,
     initialMessages,
     sandboxInfo,
     setSandboxInfo,
     archiveSession,
     unarchiveSession,
     updateChatModel,
+    updateSessionTitle,
     hadInitialMessages,
     diff,
     refreshDiff,
@@ -724,11 +916,19 @@ export function SessionChatContent() {
     updateSessionRepo,
     updateSessionPullRequest,
     checkBranchAndPr,
+    modelOptions,
+    modelOptionsLoading,
   } = useSessionChatContext();
+  const mobileActiveChatId = chatInfo.id;
+  const handleMobileNewChat = () => {
+    const { chat: newChat } = mobileCreateChat();
+    mobileSwitchChat(newChat.id);
+  };
   const {
     messages,
     error,
     sendMessage,
+    setMessages,
     status,
     addToolApprovalResponse,
     addToolOutput,
@@ -926,7 +1126,7 @@ export function SessionChatContent() {
   const lastStatusSyncAtRef = useRef(0);
   const statusSyncInFlightRef = useRef(false);
   const pendingOptimisticTitleChatIdRef = useRef<string | null>(null);
-  const hasSetOptimisticTitleRef = useRef(false);
+  const hasRequestedSessionTitleGenerationRef = useRef(false);
   const markReadRef = useRef<{
     lastAt: number;
     lastChatId: string | null;
@@ -936,6 +1136,10 @@ export function SessionChatContent() {
     lastChatId: null,
     inFlight: false,
   });
+  const inFlightStartedAtRef = useRef<number | null>(null);
+  const lastStreamRecoveryAtRef = useRef(0);
+  const streamRecoveryProbeInFlightRef = useRef(false);
+
   const requestStatusSync = useCallback(
     async (mode: "normal" | "force" = "normal"): Promise<void> => {
       const now = Date.now();
@@ -1005,6 +1209,10 @@ export function SessionChatContent() {
     requestMarkChatReadRef.current = requestMarkChatRead;
   }, [requestMarkChatRead]);
 
+  useEffect(() => {
+    hasRequestedSessionTitleGenerationRef.current = false;
+  }, [session.id]);
+
   // Refresh chats list when the first message completes to pick up the auto-generated title
   useEffect(() => {
     if (
@@ -1038,6 +1246,135 @@ export function SessionChatContent() {
     };
   }, [requestMarkChatRead]);
 
+  // Keep the recovery logic in a ref so event-listener effects never
+  // churn during streaming.  The ref is updated on every render (cheap) while
+  // the stable wrapper below keeps a constant identity for effects.
+  const maybeRecoverStreamRef = useRef(() => {});
+  maybeRecoverStreamRef.current = () => {
+    const now = Date.now();
+    if (
+      now - lastStreamRecoveryAtRef.current <
+      STREAM_RECOVERY_MIN_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    if (status === "error") {
+      lastStreamRecoveryAtRef.current = now;
+      retryChatStream({ auto: true });
+      return;
+    }
+
+    // Only run "silent stream" recovery while still in submitted state.
+    // During active streaming, reconnecting can replay recent chunks and cause
+    // visible jank even when the connection is healthy.
+    if (status !== "submitted" || hasAssistantRenderableContent) {
+      return;
+    }
+
+    const startedAt = inFlightStartedAtRef.current;
+    if (startedAt === null || now - startedAt < STREAM_RECOVERY_STALL_MS) {
+      return;
+    }
+    if (streamRecoveryProbeInFlightRef.current) {
+      return;
+    }
+
+    streamRecoveryProbeInFlightRef.current = true;
+    lastStreamRecoveryAtRef.current = now;
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/sessions/${session.id}/chats`, {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          return;
+        }
+
+        const payload: unknown = await response.json();
+        if (!isChatStreamingProbeResponse(payload)) {
+          return;
+        }
+
+        const serverChat = payload.chats.find(
+          (chat) => chat.id === chatInfo.id,
+        );
+        if (!serverChat?.isStreaming) {
+          return;
+        }
+
+        retryChatStream({ auto: true, strategy: "soft" });
+      } catch {
+        // Ignore transient probe failures and try again on next interval.
+      } finally {
+        streamRecoveryProbeInFlightRef.current = false;
+      }
+    })();
+  };
+
+  // Stable identity wrapper – safe to use in effect dependency arrays without
+  // causing teardown/re-register cycles.
+  const maybeRecoverStream = useCallback(() => {
+    maybeRecoverStreamRef.current();
+  }, []);
+
+  useEffect(() => {
+    if (isChatInFlight) {
+      if (inFlightStartedAtRef.current === null) {
+        inFlightStartedAtRef.current = Date.now();
+      }
+      return;
+    }
+
+    inFlightStartedAtRef.current = null;
+  }, [isChatInFlight, chatInfo.id]);
+
+  // Recover from transient connection drops when the tab regains visibility
+  // or the network comes back. The listeners are registered once because
+  // maybeRecoverStream has a stable identity (delegates to a ref internally).
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        maybeRecoverStream();
+      }
+    };
+
+    const onFocus = () => {
+      maybeRecoverStream();
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", maybeRecoverStream);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", maybeRecoverStream);
+    };
+  }, [maybeRecoverStream]);
+
+  useEffect(() => {
+    if (!isChatInFlight || hasAssistantRenderableContent) {
+      return;
+    }
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState !== "visible"
+    ) {
+      return;
+    }
+
+    const startedAt = inFlightStartedAtRef.current;
+    const elapsed = startedAt === null ? 0 : Date.now() - startedAt;
+    const waitMs = Math.max(0, STREAM_RECOVERY_STALL_MS - elapsed);
+    const timeout = setTimeout(() => {
+      maybeRecoverStream();
+    }, waitMs);
+
+    return () => clearTimeout(timeout);
+  }, [isChatInFlight, hasAssistantRenderableContent, maybeRecoverStream]);
+
   const handleModelChange = useCallback(
     async (modelId: string) => {
       if (!modelId || modelId === chatInfo.modelId) return;
@@ -1051,6 +1388,11 @@ export function SessionChatContent() {
       }
     },
     [chatInfo.modelId, updateChatModel],
+  );
+
+  const selectedModelOption = useMemo(
+    () => modelOptions.find((option) => option.id === chatInfo.modelId),
+    [modelOptions, chatInfo.modelId],
   );
 
   const handleFileSelect = (
@@ -1121,6 +1463,175 @@ export function SessionChatContent() {
   });
 
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [deleteMessageError, setDeleteMessageError] = useState<string | null>(
+    null,
+  );
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(
+    null,
+  );
+  const [resendingMessageId, setResendingMessageId] = useState<string | null>(
+    null,
+  );
+
+  const hasMessageActionInFlight =
+    deletingMessageId !== null || resendingMessageId !== null || isChatInFlight;
+
+  const handleDeleteUserMessage = useCallback(
+    async (messageId: string) => {
+      if (hasMessageActionInFlight) {
+        return;
+      }
+
+      const targetMessageIndex = messages.findIndex(
+        (message) => message.id === messageId,
+      );
+      if (
+        targetMessageIndex < 0 ||
+        messages[targetMessageIndex]?.role !== "user"
+      ) {
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "Delete this message and all following messages?",
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setDeleteMessageError(null);
+      setDeletingMessageId(messageId);
+
+      try {
+        const response = await fetch(
+          `/api/sessions/${session.id}/chats/${chatInfo.id}/messages/${messageId}`,
+          { method: "DELETE" },
+        );
+        const payload = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          success?: boolean;
+        };
+
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.error ?? "Failed to delete message");
+        }
+
+        setMessages(messages.slice(0, targetMessageIndex));
+        await refreshChats();
+      } catch (err) {
+        console.error("Failed to delete message:", err);
+        setDeleteMessageError(
+          err instanceof Error ? err.message : "Failed to delete message",
+        );
+      } finally {
+        setDeletingMessageId(null);
+      }
+    },
+    [
+      hasMessageActionInFlight,
+      messages,
+      session.id,
+      chatInfo.id,
+      setMessages,
+      refreshChats,
+    ],
+  );
+
+  const handleResendUserMessage = useCallback(
+    async (messageId: string) => {
+      if (hasMessageActionInFlight) {
+        return;
+      }
+
+      const targetMessageIndex = messages.findIndex(
+        (message) => message.id === messageId,
+      );
+      const targetMessage = messages[targetMessageIndex];
+      if (!targetMessage || targetMessage.role !== "user") {
+        return;
+      }
+
+      const resendText = targetMessage.parts
+        .filter(
+          (part): part is { type: "text"; text: string } =>
+            part.type === "text",
+        )
+        .map((part) => part.text)
+        .join("");
+      const resendFiles = targetMessage.parts
+        .filter((part): part is FileUIPart => part.type === "file")
+        .map((part) => ({
+          type: "file" as const,
+          mediaType: part.mediaType,
+          url: part.url,
+          ...(part.filename ? { filename: part.filename } : {}),
+        }));
+
+      if (!resendText.trim() && resendFiles.length === 0) {
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "Resend this message? This will delete this message and everything after it.",
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setDeleteMessageError(null);
+      setResendingMessageId(messageId);
+
+      try {
+        const response = await fetch(
+          `/api/sessions/${session.id}/chats/${chatInfo.id}/messages/${messageId}`,
+          { method: "DELETE" },
+        );
+        const payload = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          success?: boolean;
+        };
+
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.error ?? "Failed to resend message");
+        }
+
+        setMessages(messages.slice(0, targetMessageIndex));
+        setHasPendingResponse(true);
+        hasSeenAssistantRenderableContentRef.current = false;
+        void setChatStreaming(chatInfo.id, true);
+
+        try {
+          await sendMessage({
+            text: resendText,
+            files: resendFiles.length > 0 ? resendFiles : undefined,
+          });
+        } catch (err) {
+          setHasPendingResponse(false);
+          void setChatStreaming(chatInfo.id, false);
+          throw err;
+        }
+
+        await refreshChats();
+      } catch (err) {
+        console.error("Failed to resend message:", err);
+        setDeleteMessageError(
+          err instanceof Error ? err.message : "Failed to resend message",
+        );
+      } finally {
+        setResendingMessageId(null);
+      }
+    },
+    [
+      hasMessageActionInFlight,
+      messages,
+      session.id,
+      chatInfo.id,
+      setMessages,
+      setChatStreaming,
+      sendMessage,
+      refreshChats,
+    ],
+  );
 
   const waitForSandboxReady = useCallback(
     async (maxAttempts = 8): Promise<boolean> => {
@@ -1290,21 +1801,18 @@ export function SessionChatContent() {
     const becameError = status === "error" && prevStatus !== "error";
     const shouldClearStreaming = status === "error" || becameReady;
     prevStatusRef.current = status;
-    // Skip clearing the streaming overlay during unmount. When the user
-    // switches to another chat, the cleanup effect calls chatInstance.stop()
-    // which triggers an AbortError -> status "ready" transition. If that
-    // status change propagates before React finishes tearing down the
-    // component tree, this effect would clear the optimistic streaming
-    // overlay even though the server-side stream is still running. The
-    // SWR polling and overlay reconciliation will clear it once the server
-    // confirms the stream has actually ended.
+    // Skip clearing the streaming overlay during unmount. Route teardown aborts
+    // local transport connections, which can still trigger a transient status
+    // transition before React finishes unmounting. Clearing here would remove
+    // the optimistic streaming badge even though the server-side stream may
+    // still be running. SWR polling + overlay reconciliation clear it once the
+    // server confirms the stream has actually ended.
     if (shouldClearStreaming && isMountedRef.current) {
       void setChatStreaming(chatInfo.id, false);
     }
     if (becameError && pendingOptimisticTitleChatIdRef.current) {
       void clearChatTitle(pendingOptimisticTitleChatIdRef.current);
       pendingOptimisticTitleChatIdRef.current = null;
-      hasSetOptimisticTitleRef.current = false;
     }
     if (becameReady) {
       pendingOptimisticTitleChatIdRef.current = null;
@@ -1331,6 +1839,7 @@ export function SessionChatContent() {
     requestMarkChatRead,
     refreshChats,
     checkBranchAndPr,
+    router,
   ]);
 
   // Track whether we've auto-attempted sandbox startup for this page load.
@@ -1721,6 +2230,32 @@ export function SessionChatContent() {
 
   const hasRepo = Boolean(session.cloneUrl);
   const hasExistingPr = session.prNumber != null;
+  const existingPrUrl =
+    hasExistingPr && session.repoOwner && session.repoName
+      ? `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`
+      : null;
+  const { data: prDeploymentData, mutate: refreshPrDeployment } =
+    useSWR<PrDeploymentResponse>(
+      hasExistingPr
+        ? `/api/sessions/${session.id}/pr-deployment?prNumber=${session.prNumber}`
+        : null,
+      fetcher,
+      {
+        revalidateOnFocus: true,
+        revalidateOnReconnect: true,
+        // Poll while we're still waiting for the first deployment so the Preview
+        // action appears quickly after opening/creating the PR.
+        refreshInterval: (latestData) =>
+          getPrDeploymentRefreshInterval({
+            hasExistingPr,
+            deploymentUrl: latestData?.deploymentUrl,
+            documentHasFocus:
+              typeof document === "undefined" ? true : document.hasFocus(),
+          }),
+        shouldRetryOnError: false,
+      },
+    );
+  const prDeploymentUrl = prDeploymentData?.deploymentUrl ?? null;
   const hasUncommittedGitChanges = gitStatus?.hasUncommittedChanges ?? false;
   const hasUnpushedCommits = gitStatus?.hasUnpushedCommits ?? false;
   const hasBranchDiff =
@@ -1730,28 +2265,127 @@ export function SessionChatContent() {
   const isCreatePrBranchReady = Boolean(session?.branch);
   const canCreatePr =
     hasRepo && !hasExistingPr && !hasUncommittedGitChanges && hasBranchDiff;
-  const createPrDisabledReason = !isCreatePrBranchReady
-    ? "Waiting for branch info to sync"
-    : hasUncommittedGitChanges
-      ? "Commit and push changes before creating a pull request"
-      : !hasBranchDiff
-        ? "No committed branch changes yet"
-        : null;
   const showCommitAction =
     hasRepo &&
     (hasUncommittedGitChanges || (hasExistingPr && hasUnpushedCommits));
+  const hasOpenPr = hasExistingPr && session.prStatus === "open";
+  const canMergeAndArchive = hasOpenPr && !showCommitAction && !isArchived;
   const commitActionLabel = hasExistingPr ? "Commit & Push" : "Commit Changes";
+  const openExistingPr = () => {
+    if (!existingPrUrl) {
+      return;
+    }
+
+    window.open(existingPrUrl, "_blank", "noopener,noreferrer");
+  };
+  const openPreviewOrPr = () => {
+    const targetUrl = prDeploymentUrl ?? existingPrUrl;
+    if (!targetUrl) {
+      return;
+    }
+
+    window.open(targetUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const handleMerged = useCallback(
+    async (mergeResult: MergePullRequestResponse) => {
+      updateSessionPullRequest({
+        prNumber: mergeResult.prNumber,
+        prStatus: "merged",
+      });
+
+      if (mergeResult.branchDeleteError) {
+        console.warn(
+          "PR merged but source branch was not deleted:",
+          mergeResult.branchDeleteError,
+        );
+      }
+
+      try {
+        await archiveSession();
+        router.push("/sessions");
+      } catch (archiveError) {
+        const archiveMessage =
+          archiveError instanceof Error
+            ? archiveError.message
+            : "Failed to archive session";
+        throw new Error(
+          `Pull request merged, but archiving the session failed: ${archiveMessage}`,
+          {
+            cause: archiveError,
+          },
+        );
+      }
+    },
+    [archiveSession, router, updateSessionPullRequest],
+  );
+
+  const chatSwitcherContent = (
+    <div
+      className={cn(
+        "overflow-y-auto px-2",
+        isMobile ? "max-h-[60vh] pb-4" : "flex-1 py-3",
+      )}
+    >
+      <div className="space-y-0.5">
+        {mobileChats.map((chat) => (
+          <button
+            key={chat.id}
+            type="button"
+            onClick={() => {
+              mobileSwitchChat(chat.id);
+              setChatSwitcherOpen(false);
+            }}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-colors",
+              chat.id === mobileActiveChatId
+                ? "bg-secondary"
+                : "hover:bg-muted/50",
+            )}
+          >
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+              {chat.title || "Untitled"}
+            </span>
+            <span className="flex shrink-0 items-center gap-1.5">
+              <span className="text-[11px] text-muted-foreground">
+                {formatRelativeTime(new Date(chat.updatedAt))}
+              </span>
+              {chat.isStreaming && (
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+              )}
+              {chat.id === mobileActiveChatId && (
+                <Check className="h-3.5 w-3.5 text-foreground" />
+              )}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 border-t border-border pt-2">
+        <button
+          type="button"
+          onClick={() => {
+            handleMobileNewChat();
+            setChatSwitcherOpen(false);
+          }}
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New chat
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <>
       {/* Header */}
-      <header className="border-b border-border px-3 py-2 md:px-4 md:py-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2 md:gap-4">
+      <header className="border-b border-border px-3 py-2 lg:px-4 lg:py-3">
+        <div className="relative flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2 lg:gap-4">
             <SidebarTrigger className="shrink-0" />
             <div className="flex min-w-0 items-center gap-2 text-sm">
-              {session.repoName ? (
-                <>
+              {session.repoName && (
+                <div className="hidden min-w-0 items-center gap-2 sm:flex">
                   {session.cloneUrl ? (
                     /* oxlint-disable-next-line nextjs/no-html-link-for-pages */
                     <a
@@ -1770,20 +2404,18 @@ export function SessionChatContent() {
                   )}
                   {(session.branch ?? sandboxInfo?.currentBranch) && (
                     <>
-                      <span className="hidden text-muted-foreground/40 sm:inline">
-                        /
-                      </span>
-                      <span className="hidden text-muted-foreground sm:inline">
+                      <span className="text-muted-foreground/40">/</span>
+                      <span className="truncate text-muted-foreground">
                         {session.branch ?? sandboxInfo?.currentBranch}
                       </span>
                     </>
                   )}
-                </>
-              ) : (
-                <span className="truncate text-muted-foreground">
-                  {session.title}
-                </span>
+                  <span className="text-muted-foreground/40">/</span>
+                </div>
               )}
+              <span className="truncate font-medium text-foreground sm:font-normal sm:text-muted-foreground">
+                {session.title}
+              </span>
             </div>
             <SandboxHeaderBadge
               sandboxInfo={sandboxInfo}
@@ -1799,194 +2431,313 @@ export function SessionChatContent() {
               {sandboxUiStatus.label}
             </span>
           </div>
-          <div className="flex items-center gap-1 md:gap-2">
-            <ShareDialog
-              sessionId={session.id}
-              initialShareId={session.shareId}
-            />
-            {isArchived ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={isUnarchiving || isArchiveSnapshotPending}
-                onClick={() => {
-                  setIsUnarchiving(true);
-                  void unarchiveSession()
-                    .catch((error: unknown) => {
-                      console.error("Failed to unarchive session:", error);
-                    })
-                    .finally(() => {
-                      setIsUnarchiving(false);
-                    });
-                }}
-              >
-                {isUnarchiving ? (
-                  <Loader2 className="h-4 w-4 animate-spin md:mr-2" />
-                ) : (
-                  <ArchiveRestore className="h-4 w-4 md:mr-2" />
-                )}
-                <span className="hidden md:inline">
-                  {isUnarchiving
-                    ? "Unarchiving..."
-                    : isArchiveSnapshotPending
-                      ? "Snapshotting..."
-                      : "Unarchive"}
-                </span>
-              </Button>
-            ) : (
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button variant="ghost" size="sm">
-                    <Archive className="h-4 w-4 md:mr-2" />
-                    <span className="hidden md:inline">Archive</span>
-                  </Button>
-                </DialogTrigger>
-                <DialogContent showCloseButton={false}>
-                  <DialogHeader>
-                    <DialogTitle>Archive session?</DialogTitle>
-                    <DialogDescription>
-                      This will stop the sandbox and archive the session. You
-                      can still view it in the archive tab.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <DialogFooter>
-                    <DialogClose asChild>
-                      <Button variant="outline">Cancel</Button>
-                    </DialogClose>
-                    <DialogClose asChild>
-                      <Button
-                        onClick={() => {
-                          void archiveSession().catch((error: unknown) => {
-                            console.error("Failed to archive session:", error);
-                          });
-                          router.push("/");
-                        }}
-                      >
-                        Archive
-                      </Button>
-                    </DialogClose>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            )}
-            {!supportsDiff ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button variant="ghost" size="sm" disabled>
-                      <GitCompare className="h-4 w-4 md:mr-2" />
-                      <span className="hidden md:inline">Diff</span>
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" sideOffset={8}>
-                  Not available for in-memory sandboxes
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowDiffPanel(!showDiffPanel)}
-                disabled={!diff && !session.cachedDiff}
-              >
-                <GitCompare className="h-4 w-4 md:mr-2" />
-                <span className="hidden md:inline">Diff</span>
-                {diff &&
-                  (diff.summary.totalAdditions > 0 ||
-                    diff.summary.totalDeletions > 0) && (
-                    <span className="ml-1 text-xs md:ml-2">
-                      <span className="text-green-500">
-                        +{diff.summary.totalAdditions}
-                      </span>{" "}
-                      <span className="text-red-400">
-                        -{diff.summary.totalDeletions}
-                      </span>
-                    </span>
-                  )}
-                {hasUncommittedGitChanges && (
-                  <span
-                    className="ml-1 inline-block h-2 w-2 rounded-full bg-orange-500"
-                    aria-label="Uncommitted changes"
-                  />
-                )}
-              </Button>
-            )}
-            {hasRepo ? (
-              hasExistingPr ? (
-                showCommitAction ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCommitDialogOpen(true)}
-                  >
-                    <GitCommit className="h-4 w-4 md:mr-2" />
-                    <span className="hidden md:inline">
-                      {commitActionLabel}
-                    </span>
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      const prUrl = `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`;
-                      window.open(prUrl, "_blank", "noopener,noreferrer");
-                    }}
-                  >
-                    <GitPullRequest className="h-4 w-4 md:mr-2" />
-                    <span className="hidden md:inline">
-                      View PR #{session.prNumber}
-                    </span>
-                  </Button>
-                )
-              ) : (
-                <>
-                  {showCommitAction && (
+          {/* Right-side actions */}
+          <div className="flex items-center gap-1 xl:gap-2">
+            {/* Overflow menu + primary git action */}
+            <div className="flex items-center gap-1">
+              {hasRepo ? (
+                hasExistingPr ? (
+                  showCommitAction ? (
                     <Button
                       variant="outline"
                       size="sm"
+                      className="relative h-8 w-8 px-0 xl:w-auto xl:px-3"
                       onClick={() => setCommitDialogOpen(true)}
                     >
-                      <GitCommit className="h-4 w-4 md:mr-2" />
-                      <span className="hidden md:inline">
+                      <GitCommit className="h-4 w-4 xl:mr-2" />
+                      <span className="hidden xl:inline">
                         {commitActionLabel}
                       </span>
+                      {hasUncommittedGitChanges && (
+                        <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-orange-500" />
+                      )}
                     </Button>
-                  )}
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setPrDialogOpen(true)}
-                          disabled={!canCreatePr || !isCreatePrBranchReady}
-                        >
-                          <GitPullRequest className="h-4 w-4 md:mr-2" />
-                          <span className="hidden md:inline">Create PR</span>
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    {createPrDisabledReason && (
-                      <TooltipContent side="bottom" sideOffset={8}>
-                        {createPrDisabledReason}
-                      </TooltipContent>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-8 px-0 xl:w-auto xl:px-3"
+                      onClick={openPreviewOrPr}
+                      disabled={!prDeploymentUrl && !existingPrUrl}
+                    >
+                      {prDeploymentUrl ? (
+                        <>
+                          <ExternalLink className="h-4 w-4 xl:mr-2" />
+                          <span className="hidden xl:inline">Preview</span>
+                        </>
+                      ) : (
+                        <>
+                          <GitPullRequest className="h-4 w-4 xl:mr-2" />
+                          <span className="hidden xl:inline">
+                            View PR #{session.prNumber}
+                          </span>
+                        </>
+                      )}
+                    </Button>
+                  )
+                ) : showCommitAction ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="relative h-8 w-8 px-0 xl:w-auto xl:px-3"
+                    onClick={() => setCommitDialogOpen(true)}
+                  >
+                    <GitCommit className="h-4 w-4 xl:mr-2" />
+                    <span className="hidden xl:inline">
+                      {commitActionLabel}
+                    </span>
+                    {hasUncommittedGitChanges && (
+                      <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-orange-500" />
                     )}
-                  </Tooltip>
-                </>
-              )
-            ) : !supportsRepoCreation ? null : (
-              // Session has no repo - show Create Repo button (not available for in-memory sandboxes)
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setRepoDialogOpen(true)}
+                  </Button>
+                ) : canCreatePr && isCreatePrBranchReady ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 w-8 px-0 xl:w-auto xl:px-3"
+                    onClick={() => setPrDialogOpen(true)}
+                  >
+                    <GitPullRequest className="h-4 w-4 xl:mr-2" />
+                    <span className="hidden xl:inline">Create PR</span>
+                  </Button>
+                ) : supportsDiff ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="relative h-8 w-8 px-0 xl:w-auto xl:px-3"
+                    onClick={() => setShowDiffPanel(!showDiffPanel)}
+                    disabled={!diff && !session.cachedDiff}
+                  >
+                    <GitCompare className="h-4 w-4 xl:mr-2" />
+                    <span className="hidden xl:inline">Diff</span>
+                    {hasUncommittedGitChanges && (
+                      <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-orange-500" />
+                    )}
+                  </Button>
+                ) : null
+              ) : supportsRepoCreation ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-8 px-0 xl:w-auto xl:px-3"
+                  onClick={() => setRepoDialogOpen(true)}
+                >
+                  <FolderGit2 className="h-4 w-4 xl:mr-2" />
+                  <span className="hidden xl:inline">Create Repo</span>
+                </Button>
+              ) : null}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <EllipsisVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={handleMobileNewChat}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    New Chat
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setChatSwitcherOpen(true)}>
+                    <MessageSquareMore className="mr-2 h-4 w-4" />
+                    Switch Chat
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setMobileShareOpen(true)}>
+                    <Share2 className="mr-2 h-4 w-4" />
+                    Share
+                  </DropdownMenuItem>
+                  {isArchived ? (
+                    <DropdownMenuItem
+                      disabled={isUnarchiving || isArchiveSnapshotPending}
+                      onClick={() => {
+                        setIsUnarchiving(true);
+                        void unarchiveSession()
+                          .catch((error: unknown) => {
+                            console.error(
+                              "Failed to unarchive session:",
+                              error,
+                            );
+                          })
+                          .finally(() => {
+                            setIsUnarchiving(false);
+                          });
+                      }}
+                    >
+                      <ArchiveRestore className="mr-2 h-4 w-4" />
+                      {isUnarchiving
+                        ? "Unarchiving..."
+                        : isArchiveSnapshotPending
+                          ? "Snapshotting..."
+                          : "Unarchive"}
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem
+                      onClick={() => setMobileArchiveDialogOpen(true)}
+                    >
+                      <Archive className="mr-2 h-4 w-4" />
+                      Archive
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  {supportsDiff && (
+                    <DropdownMenuItem
+                      disabled={!diff && !session.cachedDiff}
+                      onClick={() => setShowDiffPanel(!showDiffPanel)}
+                    >
+                      <GitCompare className="mr-2 h-4 w-4" />
+                      Diff
+                      {diff &&
+                        (diff.summary.totalAdditions > 0 ||
+                          diff.summary.totalDeletions > 0) && (
+                          <span className="ml-auto text-xs">
+                            <span className="text-green-500">
+                              +{diff.summary.totalAdditions}
+                            </span>{" "}
+                            <span className="text-red-400">
+                              -{diff.summary.totalDeletions}
+                            </span>
+                          </span>
+                        )}
+                    </DropdownMenuItem>
+                  )}
+                  {hasRepo ? (
+                    hasExistingPr ? (
+                      <>
+                        {prDeploymentUrl && (
+                          <DropdownMenuItem
+                            onClick={() => {
+                              window.open(
+                                prDeploymentUrl,
+                                "_blank",
+                                "noopener,noreferrer",
+                              );
+                            }}
+                          >
+                            <ExternalLink className="mr-2 h-4 w-4" />
+                            Preview
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem
+                          onClick={openExistingPr}
+                          disabled={!existingPrUrl}
+                        >
+                          <GitPullRequest className="mr-2 h-4 w-4" />
+                          View PR #{session.prNumber}
+                        </DropdownMenuItem>
+                        {canMergeAndArchive && (
+                          <DropdownMenuItem
+                            onClick={() => setMergeDialogOpen(true)}
+                          >
+                            <GitMerge className="mr-2 h-4 w-4" />
+                            Merge & Archive
+                          </DropdownMenuItem>
+                        )}
+                        {showCommitAction && (
+                          <DropdownMenuItem
+                            onClick={() => setCommitDialogOpen(true)}
+                          >
+                            <GitCommit className="mr-2 h-4 w-4" />
+                            {commitActionLabel}
+                          </DropdownMenuItem>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {showCommitAction && (
+                          <DropdownMenuItem
+                            onClick={() => setCommitDialogOpen(true)}
+                          >
+                            <GitCommit className="mr-2 h-4 w-4" />
+                            {commitActionLabel}
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem
+                          disabled={!canCreatePr || !isCreatePrBranchReady}
+                          onClick={() => setPrDialogOpen(true)}
+                        >
+                          <GitPullRequest className="mr-2 h-4 w-4" />
+                          Create PR
+                        </DropdownMenuItem>
+                      </>
+                    )
+                  ) : supportsRepoCreation ? (
+                    <DropdownMenuItem onClick={() => setRepoDialogOpen(true)}>
+                      <FolderGit2 className="mr-2 h-4 w-4" />
+                      Create Repo
+                    </DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
+            {/* Chat switcher: drawer on mobile, right sidebar on desktop */}
+            {isMobile ? (
+              <Drawer
+                open={chatSwitcherOpen}
+                onOpenChange={setChatSwitcherOpen}
               >
-                <FolderGit2 className="h-4 w-4 md:mr-2" />
-                <span className="hidden md:inline">Create Repo</span>
-              </Button>
+                <DrawerContent>
+                  <DrawerHeader>
+                    <DrawerTitle>Switch Chat</DrawerTitle>
+                  </DrawerHeader>
+                  {chatSwitcherContent}
+                </DrawerContent>
+              </Drawer>
+            ) : (
+              <Sheet open={chatSwitcherOpen} onOpenChange={setChatSwitcherOpen}>
+                <SheetContent
+                  side="right"
+                  className="flex w-full max-w-sm flex-col gap-0 p-0"
+                >
+                  <SheetHeader className="border-b border-border px-4 py-3">
+                    <SheetTitle>Switch Chat</SheetTitle>
+                  </SheetHeader>
+                  {chatSwitcherContent}
+                </SheetContent>
+              </Sheet>
             )}
+
+            {/* Mobile share dialog */}
+            <ShareDialog
+              sessionId={session.id}
+              chatId={chatInfo.id}
+              initialShareId={null}
+              externalOpen={mobileShareOpen}
+              onExternalOpenChange={setMobileShareOpen}
+            />
+
+            {/* Mobile archive confirmation dialog */}
+            <Dialog
+              open={mobileArchiveDialogOpen}
+              onOpenChange={setMobileArchiveDialogOpen}
+            >
+              <DialogContent showCloseButton={false}>
+                <DialogHeader>
+                  <DialogTitle>Archive session?</DialogTitle>
+                  <DialogDescription>
+                    This will stop the sandbox and archive the session. You can
+                    still view it in the archive tab.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button variant="outline">Cancel</Button>
+                  </DialogClose>
+                  <DialogClose asChild>
+                    <Button
+                      onClick={() => {
+                        void archiveSession().catch((error: unknown) => {
+                          console.error("Failed to archive session:", error);
+                        });
+                        router.push("/sessions");
+                      }}
+                    >
+                      Archive
+                    </Button>
+                  </DialogClose>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
       </header>
@@ -1999,7 +2750,7 @@ export function SessionChatContent() {
             variant="outline"
             size="sm"
             className="shrink-0 gap-1.5 border-destructive/30 text-destructive hover:bg-destructive/10"
-            onClick={() => chat.clearError()}
+            onClick={() => retryChatStream()}
           >
             <RefreshCw className="h-3 w-3" />
             Retry
@@ -2063,6 +2814,16 @@ export function SessionChatContent() {
                     }
 
                     if (p.type === "text") {
+                      const isFinalAssistantTextPart =
+                        m.role === "assistant" &&
+                        !m.parts
+                          .slice(group.index + 1)
+                          .some((messagePart) => messagePart.type === "text");
+                      const canCopyAssistantMessage =
+                        isFinalAssistantTextPart &&
+                        !isMessageStreaming &&
+                        p.text.trim().length > 0;
+
                       return (
                         <div
                           key={`${m.id}-${group.renderKey}`}
@@ -2072,17 +2833,57 @@ export function SessionChatContent() {
                           )}
                         >
                           {m.role === "user" ? (
-                            <div className="min-w-0 max-w-[80%] rounded-3xl bg-secondary px-4 py-2">
-                              <p className="whitespace-pre-wrap break-words">
-                                {p.text}
-                              </p>
+                            <div className="group relative w-fit min-w-0 max-w-[80%]">
+                              <div className="rounded-3xl bg-secondary px-4 py-2">
+                                <p className="whitespace-pre-wrap break-words">
+                                  {p.text}
+                                </p>
+                              </div>
+                              {group.index === 0 && (
+                                <div className="absolute -left-20 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-md bg-background/80 p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void handleResendUserMessage(m.id)
+                                    }
+                                    disabled={hasMessageActionInFlight}
+                                    aria-label="Resend this message and delete everything after it"
+                                    className="rounded p-1 transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    {resendingMessageId === m.id ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <RotateCcw className="h-4 w-4" />
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void handleDeleteUserMessage(m.id)
+                                    }
+                                    disabled={hasMessageActionInFlight}
+                                    aria-label="Delete this message and everything after it"
+                                    className="rounded p-1 transition hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    {deletingMessageId === m.id ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="h-4 w-4" />
+                                    )}
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           ) : (
-                            <div className="min-w-0 w-full overflow-hidden">
+                            <div className="group min-w-0 w-full overflow-hidden">
                               <Streamdown
                                 animated={
                                   isMessageStreaming
-                                    ? STREAMDOWN_FADE_IN_ANIMATION
+                                    ? {
+                                        animation: "fadeIn",
+                                        duration: 250,
+                                        easing: "ease-out",
+                                      }
                                     : undefined
                                 }
                                 mode={
@@ -2093,6 +2894,27 @@ export function SessionChatContent() {
                               >
                                 {p.text}
                               </Streamdown>
+                              {canCopyAssistantMessage && (
+                                <div className="mt-1 flex justify-start">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void handleCopyAssistantMessage(
+                                        m.id,
+                                        p.text,
+                                      )
+                                    }
+                                    aria-label="Copy assistant response"
+                                    className="rounded p-1 text-muted-foreground opacity-0 transition hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+                                  >
+                                    {copiedAssistantMessageId === m.id ? (
+                                      <Check className="h-4 w-4" />
+                                    ) : (
+                                      <Copy className="h-4 w-4" />
+                                    )}
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -2133,13 +2955,30 @@ export function SessionChatContent() {
                           key={`${m.id}-${group.renderKey}`}
                           className="flex justify-end"
                         >
-                          <div className="max-w-[80%]">
+                          <div className="group relative w-fit max-w-[80%]">
                             {/* eslint-disable-next-line @next/next/no-img-element -- Data URLs not supported by next/image */}
                             <img
                               src={p.url}
                               alt={p.filename ?? "Attached image"}
                               className="max-h-64 rounded-lg"
                             />
+                            {m.role === "user" && group.index === 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleDeleteUserMessage(m.id)
+                                }
+                                disabled={hasMessageActionInFlight}
+                                aria-label="Delete this message and everything after it"
+                                className="absolute -left-10 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition hover:text-destructive group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {deletingMessageId === m.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -2187,6 +3026,18 @@ export function SessionChatContent() {
               <button
                 type="button"
                 onClick={() => setRestoreError(null)}
+                className="ml-2 rounded p-0.5 hover:bg-destructive/20"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+          {deleteMessageError && (
+            <div className="flex items-center justify-between rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <span>{deleteMessageError}</span>
+              <button
+                type="button"
+                onClick={() => setDeleteMessageError(null)}
                 className="ml-2 rounded p-0.5 hover:bg-destructive/20"
               >
                 <X className="h-4 w-4" />
@@ -2253,17 +3104,64 @@ export function SessionChatContent() {
                 setInput("");
                 clearImages();
 
+                const isFirstChatInSession =
+                  !mobileChatsLoading &&
+                  mobileChats.length === 1 &&
+                  mobileChats[0]?.id === chatInfo.id;
                 const shouldSetOptimisticTitle =
-                  !hadInitialMessages && !hasSetOptimisticTitleRef.current;
+                  isFirstChatInSession &&
+                  !hadInitialMessages &&
+                  messages.length === 0;
                 const trimmedText = messageText.trim();
+                const shouldGenerateSessionTitle =
+                  shouldSetOptimisticTitle &&
+                  trimmedText.length > 0 &&
+                  !hasRequestedSessionTitleGenerationRef.current;
                 if (shouldSetOptimisticTitle && trimmedText.length > 0) {
                   const nextTitle =
                     trimmedText.length > 30
                       ? `${trimmedText.slice(0, 30)}...`
                       : trimmedText;
-                  hasSetOptimisticTitleRef.current = true;
                   pendingOptimisticTitleChatIdRef.current = chatInfo.id;
                   void setChatTitle(chatInfo.id, nextTitle);
+
+                  if (shouldGenerateSessionTitle) {
+                    hasRequestedSessionTitleGenerationRef.current = true;
+                    // Generate a title in parallel and persist it as soon as it
+                    // resolves, without waiting for the assistant response.
+                    const generatedTitlePromise = fetch("/api/generate-title", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ message: trimmedText }),
+                    })
+                      .then(async (res) => {
+                        if (!res.ok) {
+                          return null;
+                        }
+
+                        const data = (await res.json().catch(() => null)) as {
+                          title?: unknown;
+                        } | null;
+                        if (typeof data?.title !== "string") {
+                          return null;
+                        }
+
+                        const title = data.title.trim();
+                        return title.length > 0 ? title : null;
+                      })
+                      .catch(() => null);
+
+                    void generatedTitlePromise
+                      .then((generatedTitle) => {
+                        if (!generatedTitle) {
+                          return;
+                        }
+                        return updateSessionTitle(generatedTitle);
+                      })
+                      .catch(() => {
+                        // Ignore failures and keep the existing session title.
+                      });
+                  }
                 }
                 setHasPendingResponse(true);
                 hasSeenAssistantRenderableContentRef.current = false;
@@ -2276,7 +3174,6 @@ export function SessionChatContent() {
                       pendingOptimisticTitleChatIdRef.current,
                     );
                     pendingOptimisticTitleChatIdRef.current = null;
-                    hasSetOptimisticTitleRef.current = false;
                   }
                   setHasPendingResponse(false);
                   void setChatStreaming(chatInfo.id, false);
@@ -2342,8 +3239,8 @@ export function SessionChatContent() {
                     if (handleSlashKeyDown(e)) {
                       return;
                     }
-                    // Handle form submission
-                    if (e.key === "Enter" && !e.shiftKey) {
+                    // On iOS, Return should insert a newline (send via submit button)
+                    if (e.key === "Enter" && !e.shiftKey && !isIosDevice) {
                       e.preventDefault();
                       if (!isArchived && isSandboxActive) {
                         e.currentTarget.form?.requestSubmit();
@@ -2393,13 +3290,14 @@ export function SessionChatContent() {
                   {renderMessages.length === 0 && chatInfo.modelId ? (
                     <div
                       className={
-                        isChatInFlight || isUpdatingModel
+                        isChatInFlight || isUpdatingModel || modelOptionsLoading
                           ? "pointer-events-none opacity-60"
                           : undefined
                       }
                     >
                       <ModelSelectorCompact
                         value={chatInfo.modelId}
+                        modelOptions={modelOptions}
                         onChange={(modelId) => {
                           void handleModelChange(modelId);
                         }}
@@ -2408,15 +3306,14 @@ export function SessionChatContent() {
                   ) : (
                     chatInfo.modelId && (
                       <span className="text-xs text-muted-foreground/60">
-                        {chatInfo.modelId}
+                        {selectedModelOption?.label ?? chatInfo.modelId}
                       </span>
                     )
                   )}
-                  {/* TODO: Derive context limit from model ID instead of hardcoding */}
                   <ContextUsageIndicator
                     inputTokens={tokenUsage.inputTokens}
                     outputTokens={tokenUsage.outputTokens}
-                    contextLimit={200_000}
+                    contextLimit={contextLimit ?? DEFAULT_CONTEXT_LIMIT}
                   />
                 </div>
 
@@ -2513,7 +3410,18 @@ export function SessionChatContent() {
           hasSandbox={sandboxInfo !== null}
           onPrDetected={(pr) => {
             updateSessionPullRequest(pr);
+            void refreshGitStatus().catch(() => {});
           }}
+        />
+      )}
+
+      {/* Merge PR Dialog */}
+      {session && (
+        <MergePrDialog
+          open={mergeDialogOpen}
+          onOpenChange={setMergeDialogOpen}
+          session={session}
+          onMerged={handleMerged}
         />
       )}
 
@@ -2531,6 +3439,9 @@ export function SessionChatContent() {
             refreshGitStatus().catch(() => {});
             refreshDiff().catch(() => {});
             refreshFiles().catch(() => {});
+            if (hasExistingPr) {
+              refreshPrDeployment().catch(() => {});
+            }
           }}
         />
       )}
