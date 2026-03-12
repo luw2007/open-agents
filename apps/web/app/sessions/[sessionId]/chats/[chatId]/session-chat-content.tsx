@@ -99,6 +99,7 @@ import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useScrollToBottom } from "@/hooks/use-scroll-to-bottom";
 import { useSessionChats } from "@/hooks/use-session-chats";
 import { useSlashCommands } from "@/hooks/use-slash-commands";
+import { useUserPreferences } from "@/hooks/use-user-preferences";
 import {
   hasRenderableAssistantPart,
   isChatInFlight as isChatInFlightStatus,
@@ -147,9 +148,6 @@ const Streamdown = dynamic(
 const STREAM_RECOVERY_STALL_MS = 4_000;
 const STREAM_RECOVERY_MIN_INTERVAL_MS = 8_000;
 const COMPLETED_TURN_FULL_REFRESH_DELAY_MS = 3_000;
-const POST_TURN_GIT_STATUS_POLL_DELAYS_MS = [
-  2_000, 5_000, 8_000, 10_000,
-] as const;
 
 const emptySubscribe = () => () => {};
 
@@ -1068,6 +1066,7 @@ export function SessionChatContent({
     clearChatTitle,
     refreshChats,
   } = useSessionChats(session.id);
+  const { preferences, loading: preferencesLoading } = useUserPreferences();
   const renderMessages = useMemo(
     () => (hasMounted ? messages : initialMessages),
     [hasMounted, messages, initialMessages],
@@ -1935,7 +1934,7 @@ export function SessionChatContent({
       pendingOptimisticTitleChatIdRef.current = null;
     }
 
-    const followUpTimeouts: ReturnType<typeof setTimeout>[] = [];
+    let followUpTimeout: ReturnType<typeof setTimeout> | null = null;
     if (
       (wasStreaming || wasSubmitted) &&
       status === "ready" &&
@@ -1949,35 +1948,20 @@ export function SessionChatContent({
         await checkBranchAndPr().catch(() => undefined);
       };
 
-      const scheduleFollowUpRefresh = (
-        callback: () => void,
-        delayMs: number,
-      ) => {
-        followUpTimeouts.push(setTimeout(callback, delayMs));
-      };
-
       void refreshCompletedTurnState();
       void requestMarkChatRead("force");
       void refreshChats();
 
       if (session.cloneUrl && session.repoOwner && session.repoName) {
-        scheduleFollowUpRefresh(() => {
+        followUpTimeout = setTimeout(() => {
           void refreshCompletedTurnState();
         }, COMPLETED_TURN_FULL_REFRESH_DELAY_MS);
-      }
-
-      if (session.cloneUrl) {
-        for (const delayMs of POST_TURN_GIT_STATUS_POLL_DELAYS_MS) {
-          scheduleFollowUpRefresh(() => {
-            void refreshGitStatus().catch(() => undefined);
-          }, delayMs);
-        }
       }
     }
 
     return () => {
-      for (const timeout of followUpTimeouts) {
-        clearTimeout(timeout);
+      if (followUpTimeout !== null) {
+        clearTimeout(followUpTimeout);
       }
     };
   }, [
@@ -2423,6 +2407,9 @@ export function SessionChatContent({
   const showCommitAction =
     hasRepo &&
     (hasUncommittedGitChanges || (hasExistingPr && hasUnpushedCommits));
+  const preferCommitActionInMenu =
+    preferencesLoading || (preferences?.autoCommitPush ?? false);
+  const showPrimaryCommitAction = showCommitAction && !preferCommitActionInMenu;
   const hasOpenPr = hasExistingPr && session.prStatus === "open";
   const canMergeAndArchive = hasOpenPr && !showCommitAction && !isArchived;
   const commitActionLabel = hasExistingPr ? "Commit & Push" : "Commit Changes";
@@ -2536,7 +2523,7 @@ export function SessionChatContent({
             <div className="flex items-center gap-1">
               {hasRepo ? (
                 hasExistingPr ? (
-                  showCommitAction ? (
+                  showPrimaryCommitAction ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -2588,7 +2575,7 @@ export function SessionChatContent({
                       )}
                     </>
                   )
-                ) : showCommitAction ? (
+                ) : showPrimaryCommitAction ? (
                   <Button
                     variant="outline"
                     size="sm"
