@@ -36,7 +36,6 @@ import { getCachedSkills, setCachedSkills } from "@/lib/skills-cache";
 import { getUserGitHubToken } from "@/lib/github/user-token";
 import { resolveModelSelection } from "@/lib/model-variants";
 import { DEFAULT_MODEL_ID } from "@/lib/models";
-import { resumableStreamContext } from "@/lib/resumable-stream-context";
 import { DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
 import { buildActiveLifecycleUpdate } from "@/lib/sandbox/lifecycle";
 import { isSandboxActive } from "@/lib/sandbox/utils";
@@ -499,7 +498,7 @@ export async function POST(req: Request) {
 
   // Use Redis stop signals as the sole cancellation mechanism for generation.
   // We intentionally do not bind `req.signal` so a transient client disconnect
-  // does not cancel work; clients can reconnect via resumable streams.
+  // does not cancel work; the final response is still persisted server-side.
   const controller = new AbortController();
   let shouldAutoCommitOnFinish = true;
   const unsubscribeStop = await onStopSignal(chatId, () => {
@@ -603,12 +602,7 @@ export async function POST(req: Request) {
       }
       return undefined;
     },
-    async consumeSseStream({ stream }) {
-      await resumableStreamContext.createNewResumableStream(
-        ownedStreamToken,
-        () => stream,
-      );
-
+    async consumeSseStream() {
       const claimed = await claimStreamOwnership();
       if (!claimed) {
         return;
