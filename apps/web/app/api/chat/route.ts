@@ -105,6 +105,7 @@ export async function POST(req: Request) {
     {
       messages,
       chatId,
+      sessionId,
       userId,
       modelId: mainModelSelection.id,
       agentOptions: {

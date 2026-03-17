@@ -7,30 +7,24 @@ import {
   type ModelMessage,
   type UIMessageChunk,
 } from "ai";
-import {
-  addLanguageModelUsage,
-  collectTaskToolUsageEvents,
-  sumLanguageModelUsage,
-} from "@open-harness/agent";
+import { addLanguageModelUsage } from "@open-harness/agent";
 import type { OpenHarnessAgentCallOptions } from "@open-harness/agent";
 import { getWorkflowMetadata, getWritable } from "workflow";
 import { getRun } from "workflow/api";
 import { webAgent } from "@/app/config";
 import type { WebAgentUIMessage, WebAgentMessageMetadata } from "@/app/types";
 import {
-  compareAndSetChatActiveStreamId,
-  createChatMessageIfNotExists,
-  touchChat,
-  updateChat,
-  isFirstChatMessage,
-  upsertChatMessageScoped,
-  updateChatAssistantActivity,
-} from "@/lib/db/sessions";
-import { recordUsage } from "@/lib/db/usage";
+  clearActiveStream,
+  persistAssistantMessage,
+  persistSandboxState,
+  persistUserMessage,
+  recordWorkflowUsage,
+} from "./chat-post-finish";
 
 type Options = {
   messages: WebAgentUIMessage[];
   chatId: string;
+  sessionId: string;
   userId: string;
   modelId: string;
   agentOptions: OpenHarnessAgentCallOptions;
@@ -38,9 +32,6 @@ type Options = {
 };
 
 type Writable = WritableStream<UIMessageChunk>;
-
-const cachedInputTokensFor = (usage: LanguageModelUsage) =>
-  usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens ?? 0;
 
 const shouldPauseForToolInteraction = (parts: WebAgentUIMessage["parts"]) =>
   parts.some(
@@ -63,155 +54,6 @@ const generateId = async () => {
   "use step";
   return generateIdAi();
 };
-
-async function persistUserMessage(
-  chatId: string,
-  message: WebAgentUIMessage,
-): Promise<void> {
-  "use step";
-
-  if (message.role !== "user") {
-    return;
-  }
-
-  try {
-    const created = await createChatMessageIfNotExists({
-      id: message.id,
-      chatId,
-      role: "user",
-      parts: message,
-    });
-
-    if (!created) {
-      return;
-    }
-
-    await touchChat(chatId);
-
-    const shouldSetTitle = await isFirstChatMessage(chatId, created.id);
-    if (!shouldSetTitle) {
-      return;
-    }
-
-    const textContent = message.parts
-      .filter(
-        (part): part is { type: "text"; text: string } => part.type === "text",
-      )
-      .map((part) => part.text)
-      .join(" ")
-      .trim();
-
-    if (textContent.length === 0) {
-      return;
-    }
-
-    const title =
-      textContent.length > 30 ? `${textContent.slice(0, 30)}...` : textContent;
-    await updateChat(chatId, { title });
-  } catch (error) {
-    console.error("[workflow] Failed to persist user message:", error);
-  }
-}
-
-async function persistAssistantMessage(
-  chatId: string,
-  message: WebAgentUIMessage,
-): Promise<void> {
-  "use step";
-
-  try {
-    const result = await upsertChatMessageScoped({
-      id: message.id,
-      chatId,
-      role: "assistant",
-      parts: message,
-    });
-
-    if (result.status === "conflict") {
-      console.warn(
-        `[workflow] Skipped assistant upsert due to ID scope conflict: ${message.id}`,
-      );
-    } else if (result.status === "inserted") {
-      await updateChatAssistantActivity(chatId, new Date());
-    }
-  } catch (error) {
-    console.error("[workflow] Failed to persist assistant message:", error);
-  }
-}
-
-async function clearActiveStream(
-  chatId: string,
-  workflowRunId: string,
-): Promise<void> {
-  "use step";
-  try {
-    // Only clear if this workflow's run ID is still the active one.
-    // Prevents a late-finishing workflow from clearing a newer workflow's ID.
-    await compareAndSetChatActiveStreamId(chatId, workflowRunId, null);
-  } catch (error) {
-    console.error("[workflow] Failed to clear activeStreamId:", error);
-  }
-}
-
-async function recordWorkflowUsage(
-  userId: string,
-  modelId: string,
-  totalUsage: LanguageModelUsage | undefined,
-  responseMessage: WebAgentUIMessage,
-): Promise<void> {
-  "use step";
-
-  try {
-    // Record main agent usage
-    if (totalUsage) {
-      await recordUsage(userId, {
-        source: "web",
-        agentType: "main",
-        model: modelId,
-        messages: [responseMessage],
-        usage: {
-          inputTokens: totalUsage.inputTokens ?? 0,
-          cachedInputTokens: cachedInputTokensFor(totalUsage),
-          outputTokens: totalUsage.outputTokens ?? 0,
-        },
-      });
-    }
-
-    // Record subagent usage (aggregated by model)
-    const subagentUsageEvents = collectTaskToolUsageEvents(responseMessage);
-    if (subagentUsageEvents.length > 0) {
-      const subagentUsageByModel = new Map<string, LanguageModelUsage>();
-      for (const event of subagentUsageEvents) {
-        const eventModelId = event.modelId ?? modelId;
-        if (!eventModelId) {
-          continue;
-        }
-
-        const existing = subagentUsageByModel.get(eventModelId);
-        const combined = sumLanguageModelUsage(existing, event.usage);
-        if (combined) {
-          subagentUsageByModel.set(eventModelId, combined);
-        }
-      }
-
-      for (const [eventModelId, usage] of subagentUsageByModel) {
-        await recordUsage(userId, {
-          source: "web",
-          agentType: "subagent",
-          model: eventModelId,
-          messages: [],
-          usage: {
-            inputTokens: usage.inputTokens ?? 0,
-            cachedInputTokens: cachedInputTokensFor(usage),
-            outputTokens: usage.outputTokens ?? 0,
-          },
-        });
-      }
-    }
-  } catch (error) {
-    console.error("[workflow] Failed to record usage:", error);
-  }
-}
 
 export async function runAgentWorkflow(options: Options) {
   "use workflow";
@@ -300,6 +142,12 @@ export async function runAgentWorkflow(options: Options) {
     totalUsage,
     pendingAssistantResponse,
   );
+
+  // Persist the sandbox state so lifecycle timers stay accurate.
+  const sandboxState = options.agentOptions.sandbox?.state;
+  if (sandboxState) {
+    await persistSandboxState(options.sessionId, sandboxState);
+  }
 
   await clearActiveStream(options.chatId, workflowRunId);
   await sendFinish(writable);
