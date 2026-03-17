@@ -11,9 +11,18 @@ import { getRun } from "workflow/api";
 import { webAgent } from "@/app/config";
 import type { WebAgentUIMessage, WebAgentMessageMetadata } from "@/app/types";
 import type { OpenHarnessAgentCallOptions } from "@open-harness/agent";
+import {
+  createChatMessageIfNotExists,
+  touchChat,
+  updateChat,
+  isFirstChatMessage,
+  upsertChatMessageScoped,
+  updateChatAssistantActivity,
+} from "@/lib/db/sessions";
 
 type Options = {
   messages: WebAgentUIMessage[];
+  chatId: string;
   agentOptions: OpenHarnessAgentCallOptions;
   maxSteps?: number;
 };
@@ -42,6 +51,81 @@ const generateId = async () => {
   return generateIdAi();
 };
 
+async function persistUserMessage(
+  chatId: string,
+  message: WebAgentUIMessage,
+): Promise<void> {
+  "use step";
+
+  if (message.role !== "user") {
+    return;
+  }
+
+  try {
+    const created = await createChatMessageIfNotExists({
+      id: message.id,
+      chatId,
+      role: "user",
+      parts: message,
+    });
+
+    if (!created) {
+      return;
+    }
+
+    await touchChat(chatId);
+
+    const shouldSetTitle = await isFirstChatMessage(chatId, created.id);
+    if (!shouldSetTitle) {
+      return;
+    }
+
+    const textContent = message.parts
+      .filter(
+        (part): part is { type: "text"; text: string } => part.type === "text",
+      )
+      .map((part) => part.text)
+      .join(" ")
+      .trim();
+
+    if (textContent.length === 0) {
+      return;
+    }
+
+    const title =
+      textContent.length > 30 ? `${textContent.slice(0, 30)}...` : textContent;
+    await updateChat(chatId, { title });
+  } catch (error) {
+    console.error("[workflow] Failed to persist user message:", error);
+  }
+}
+
+async function persistAssistantMessage(
+  chatId: string,
+  message: WebAgentUIMessage,
+): Promise<void> {
+  "use step";
+
+  try {
+    const result = await upsertChatMessageScoped({
+      id: message.id,
+      chatId,
+      role: "assistant",
+      parts: message,
+    });
+
+    if (result.status === "conflict") {
+      console.warn(
+        `[workflow] Skipped assistant upsert due to ID scope conflict: ${message.id}`,
+      );
+    } else if (result.status === "inserted") {
+      await updateChatAssistantActivity(chatId, new Date());
+    }
+  } catch (error) {
+    console.error("[workflow] Failed to persist assistant message:", error);
+  }
+}
+
 export async function runAgentWorkflow(options: Options) {
   "use workflow";
 
@@ -54,7 +138,8 @@ export async function runAgentWorkflow(options: Options) {
     throw new Error("runAgentWorkflow requires at least one message");
   }
 
-  const [modelMessages, assistantId] = await Promise.all([
+  const [, modelMessages, assistantId] = await Promise.all([
+    persistUserMessage(options.chatId, latestMessage),
     convertMessages(options.messages),
     latestMessage.role === "assistant"
       ? Promise.resolve(latestMessage.id)
@@ -111,6 +196,10 @@ export async function runAgentWorkflow(options: Options) {
     ) {
       break;
     }
+  }
+
+  if (!wasAborted) {
+    await persistAssistantMessage(options.chatId, pendingAssistantResponse);
   }
 
   await sendFinish(writable);

@@ -1,31 +1,23 @@
-import { convertToModelMessages, type LanguageModelUsage } from "ai";
-import { nanoid } from "nanoid";
+import { createUIMessageStreamResponse, type InferUIMessageChunk } from "ai";
+import { start } from "workflow/api";
 import { webAgent } from "@/app/config";
-import {
-  updateChatAssistantActivity,
-  updateSession,
-  upsertChatMessageScoped,
-} from "@/lib/db/sessions";
+import type { WebAgentUIMessage } from "@/app/types";
+import { updateSession } from "@/lib/db/sessions";
 import { getUserPreferences } from "@/lib/db/user-preferences";
-import { resumableStreamContext } from "@/lib/resumable-stream-context";
+import { createCancelableReadableStream } from "@/lib/chat/create-cancelable-readable-stream";
 import { buildActiveLifecycleUpdate } from "@/lib/sandbox/lifecycle";
 import {
   requireAuthenticatedUser,
   requireOwnedSessionChat,
 } from "./_lib/chat-context";
-import { scheduleLatestMessagePersistence } from "./_lib/message-persistence";
 import { resolveChatModelSelection } from "./_lib/model-selection";
-import { handleChatStreamFinish } from "./_lib/post-finish";
 import { parseChatRequestBody, requireChatIdentifiers } from "./_lib/request";
 import { createChatRuntime } from "./_lib/runtime";
-import {
-  claimStreamOwnership,
-  createOwnedStreamTokenClearer,
-  createStreamToken,
-  setupStreamAbortLifecycle,
-} from "./_lib/stream-lifecycle";
+import { runAgentWorkflow } from "@/app/workflows/chat";
 
 export const maxDuration = 800;
+
+type WebAgentUIMessageChunk = InferUIMessageChunk<WebAgentUIMessage>;
 
 export async function POST(req: Request) {
   // 1. Validate session
@@ -69,33 +61,14 @@ export async function POST(req: Request) {
   }
 
   const requestStartedAt = new Date();
-  const requestStartedAtMs = requestStartedAt.getTime();
-
-  const ownedStreamToken = createStreamToken(requestStartedAtMs);
-  const clearOwnedStreamToken = createOwnedStreamTokenClearer(
-    chatId,
-    ownedStreamToken,
-  );
-
-  // Save the latest incoming user message in the background.
-  // Assistant snapshots are persisted after stream ownership is atomically claimed.
-  const pendingAssistantSnapshot = scheduleLatestMessagePersistence(
-    chatId,
-    messages,
-  );
 
   // Refresh lifecycle activity so long-running responses don't look idle.
-  // Keep this synchronous so lifecycle workers see activity before generation starts.
   await updateSession(sessionId, {
     ...buildActiveLifecycleUpdate(sessionRecord.sandboxState, {
       activityAt: requestStartedAt,
     }),
   });
 
-  const modelMessagesPromise = convertToModelMessages(messages, {
-    ignoreIncompleteToolCalls: true,
-    tools: webAgent.tools,
-  });
   const runtimePromise = createChatRuntime({
     userId,
     sessionId,
@@ -106,8 +79,7 @@ export async function POST(req: Request) {
     return null;
   });
 
-  const [modelMessages, { sandbox, skills }, preferences] = await Promise.all([
-    modelMessagesPromise,
+  const [{ sandbox, skills }, preferences] = await Promise.all([
     runtimePromise,
     preferencesPromise,
   ]);
@@ -126,16 +98,12 @@ export async function POST(req: Request) {
       })
     : undefined;
 
-  // Use Redis stop signals as the sole cancellation mechanism for generation.
-  // We intentionally do not bind `req.signal` so a transient client disconnect
-  // does not cancel work; clients can reconnect via resumable streams.
-  const abortLifecycle = await setupStreamAbortLifecycle(chatId);
-
-  let result;
-  try {
-    result = await webAgent.stream({
-      messages: modelMessages,
-      options: {
+  // Start the durable workflow
+  const run = await start(runAgentWorkflow, [
+    {
+      messages,
+      chatId,
+      agentOptions: {
         sandbox: {
           state: activeSandboxState,
           workingDirectory: sandbox.workingDirectory,
@@ -144,105 +112,21 @@ export async function POST(req: Request) {
         },
         model: mainModelSelection,
         ...(subagentModelSelection
-          ? {
-              subagentModel: subagentModelSelection,
-            }
+          ? { subagentModel: subagentModelSelection }
           : {}),
         ...(skills.length > 0 && { skills }),
       },
-      abortSignal: abortLifecycle.controller.signal,
-    });
-  } catch (error) {
-    abortLifecycle.cleanup();
-    await clearOwnedStreamToken();
-    throw error;
-  }
+    },
+  ]);
 
-  void result.consumeStream().then(
-    () => {
-      abortLifecycle.cleanup();
-    },
-    async () => {
-      abortLifecycle.cleanup();
-      await clearOwnedStreamToken();
-    },
+  const stream = createCancelableReadableStream(
+    run.getReadable<WebAgentUIMessageChunk>(),
   );
 
-  // Track last step usage for message metadata
-  let lastStepUsage: LanguageModelUsage | undefined;
-  let totalMessageUsage: LanguageModelUsage | undefined;
-
-  // Save assistant message on finish, and persist sandbox state if applicable
-  return result.toUIMessageStreamResponse({
-    originalMessages: messages,
-    generateMessageId: nanoid,
-    messageMetadata: ({ part }) => {
-      // Track per-step usage from finish-step events. The last step's input
-      // tokens represents actual context window utilization.
-      if (part.type === "finish-step") {
-        lastStepUsage = part.usage;
-        return { lastStepUsage, totalMessageUsage: undefined };
-      }
-      // On finish, include both the last step usage and total message usage
-      if (part.type === "finish") {
-        totalMessageUsage = part.totalUsage;
-        return { lastStepUsage, totalMessageUsage: part.totalUsage };
-      }
-      return undefined;
-    },
-    async consumeSseStream({ stream }) {
-      await resumableStreamContext.createNewResumableStream(
-        ownedStreamToken,
-        () => stream,
-      );
-
-      const claimed = await claimStreamOwnership({
-        chatId,
-        ownedStreamToken,
-        requestStartedAtMs,
-      });
-      if (!claimed) {
-        return;
-      }
-
-      if (!pendingAssistantSnapshot) {
-        return;
-      }
-
-      try {
-        const upsertResult = await upsertChatMessageScoped({
-          id: pendingAssistantSnapshot.id,
-          chatId,
-          role: "assistant",
-          parts: pendingAssistantSnapshot,
-        });
-        if (upsertResult.status === "conflict") {
-          console.warn(
-            `Skipped assistant message upsert due to ID scope conflict: ${pendingAssistantSnapshot.id}`,
-          );
-        } else if (upsertResult.status === "inserted") {
-          await updateChatAssistantActivity(chatId, new Date());
-        }
-      } catch (error) {
-        console.error("Failed to save latest chat message:", error);
-      }
-    },
-    onFinish: async ({ responseMessage }) => {
-      abortLifecycle.cleanup();
-      await handleChatStreamFinish({
-        req,
-        userId,
-        sessionId,
-        chatId,
-        sessionRecord,
-        sandbox,
-        model: mainModelSelection.id,
-        totalMessageUsage,
-        shouldAutoCommitOnFinish: abortLifecycle.shouldAutoCommitOnFinish(),
-        preferences,
-        clearOwnedStreamToken,
-        responseMessage,
-      });
+  return createUIMessageStreamResponse({
+    stream,
+    headers: {
+      "x-workflow-run-id": run.runId,
     },
   });
 }
