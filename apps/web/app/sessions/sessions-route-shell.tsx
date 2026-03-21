@@ -40,7 +40,7 @@ const RouteContentShell = memo(function RouteContentShell({
   children: ReactNode;
 }) {
   return (
-    <SidebarInset className="flex min-w-0 flex-1 flex-col overflow-hidden">
+    <SidebarInset className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {children}
     </SidebarInset>
   );
@@ -156,15 +156,18 @@ export function SessionsRouteShell({
   return (
     <SessionsShellProvider value={shellContextValue}>
       <SidebarProvider
-        className="h-dvh overflow-hidden"
+        className="h-dvh overflow-hidden bg-background"
         style={
           {
-            "--sidebar-width": "20rem",
+            "--sidebar-width": "clamp(23rem, 30vw, 30rem)",
           } as CSSProperties
         }
       >
-        <Sidebar collapsible="offcanvas" className="border-r border-border">
-          <SidebarContent className="bg-muted/20">
+        <Sidebar
+          collapsible="offcanvas"
+          className="border-r border-border/70 bg-background"
+        >
+          <SidebarContent className="bg-background">
             <InboxSidebar
               sessions={sessions}
               archivedCount={archivedCount}
