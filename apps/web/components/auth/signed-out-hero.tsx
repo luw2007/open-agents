@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { SignInButton } from "@/components/auth/sign-in-button";
 import { AppMockup } from "./hero-app-mockup";
 import { ArrowIcon, GitHubIcon, TerminalIcon } from "./hero-icons";
@@ -260,6 +261,14 @@ export function SignedOutHero() {
                 >
                   GitHub
                 </a>
+              </li>
+              <li>
+                <Link
+                  href="/faq"
+                  className="text-[13px] text-black/35 transition-colors hover:text-black/60 dark:text-white/40 dark:hover:text-white/70"
+                >
+                  FAQ
+                </Link>
               </li>
               <li>
                 <a
