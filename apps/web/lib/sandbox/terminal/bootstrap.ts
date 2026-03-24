@@ -15,6 +15,7 @@ import {
 } from "./server-script";
 
 const TERMINAL_RUNTIME_DIR = "/tmp/open-harness-terminal";
+const TERMINAL_PROCESS_NAME = "open-harness-terminal-server";
 const TERMINAL_PACKAGE_JSON_PATH = `${TERMINAL_RUNTIME_DIR}/package.json`;
 const TERMINAL_SERVER_PATH = `${TERMINAL_RUNTIME_DIR}/server.mjs`;
 const TERMINAL_TOKEN_PATH = `${TERMINAL_RUNTIME_DIR}/token`;
@@ -182,7 +183,7 @@ async function stopTerminalServer(
   sandbox: Awaited<ReturnType<typeof connectSandbox>>,
 ): Promise<void> {
   const stopResult = await sandbox.exec(
-    `pkill -f "${TERMINAL_SERVER_PATH}" || true`,
+    `pkill -f "[${TERMINAL_PROCESS_NAME[0]}]${TERMINAL_PROCESS_NAME.slice(1)}" || pkill -f "[s]erver.mjs" || true`,
     DEFAULT_WORKING_DIRECTORY,
     15_000,
   );
@@ -203,7 +204,7 @@ async function startTerminalServer(
   }
 
   await sandbox.execDetached(
-    `node server.mjs > "${TERMINAL_LOG_PATH}" 2>&1`,
+    `exec -a ${TERMINAL_PROCESS_NAME} node server.mjs > "${TERMINAL_LOG_PATH}" 2>&1`,
     TERMINAL_RUNTIME_DIR,
   );
 
