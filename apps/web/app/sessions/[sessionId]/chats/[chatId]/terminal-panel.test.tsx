@@ -30,7 +30,8 @@ describe("TerminalPanelView", () => {
       <TerminalPanelView
         state={{
           status: "ready",
-          terminalUrl: "https://terminal.vercel.run/#token=test-token",
+          terminalUrl:
+            "https://terminal.vercel.run/#token=test-token&session=session-launch-1",
         }}
       />,
     );

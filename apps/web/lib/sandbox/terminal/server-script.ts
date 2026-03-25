@@ -1,4 +1,119 @@
-export const TERMINAL_SERVER_VERSION = "2026-03-24-dist-assets-v2";
+export const TERMINAL_GATEWAY_VERSION = "2026-03-25-gateway-v1";
+
+const TERMINAL_GATEWAY_CLIENT_SCRIPT = String.raw`
+  import { FitAddon, Terminal, init } from "/dist/ghostty-web.js";
+
+  const statusElement = document.getElementById("terminal-status");
+  const terminalContainer = document.getElementById("terminal");
+  const hashParams = new URLSearchParams(window.location.hash.slice(1));
+  const launchToken = hashParams.get("token");
+  const sessionId = hashParams.get("session");
+
+  function setStatus(label, state) {
+    statusElement.textContent = label;
+    statusElement.dataset.state = state;
+  }
+
+  if (!launchToken || !sessionId) {
+    setStatus("Missing credentials", "error");
+    throw new Error("Missing terminal session credentials");
+  }
+
+  await init();
+
+  const term = new Terminal({
+    cursorBlink: true,
+    fontSize: 13,
+    fontFamily:
+      'Geist Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+    scrollback: 10000,
+    theme: {
+      background: "#09090b",
+      foreground: "#fafafa",
+    },
+  });
+
+  const fitAddon = new FitAddon();
+  term.loadAddon(fitAddon);
+  await term.open(terminalContainer);
+  fitAddon.fit();
+  if (typeof fitAddon.observeResize === "function") {
+    fitAddon.observeResize();
+  }
+
+  let socket;
+  let reconnectTimeoutId = null;
+
+  function clearReconnectTimeout() {
+    if (reconnectTimeoutId !== null) {
+      window.clearTimeout(reconnectTimeoutId);
+      reconnectTimeoutId = null;
+    }
+  }
+
+  function scheduleReconnect() {
+    clearReconnectTimeout();
+    reconnectTimeoutId = window.setTimeout(() => {
+      reconnectTimeoutId = null;
+      connect();
+    }, 1000);
+  }
+
+  function buildWebSocketUrl() {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const url = new URL(protocol + "//" + window.location.host + "/ws");
+    url.searchParams.set("token", launchToken);
+    url.searchParams.set("session", sessionId);
+    url.searchParams.set("cols", String(term.cols));
+    url.searchParams.set("rows", String(term.rows));
+    return url.toString();
+  }
+
+  function connect() {
+    setStatus("Connecting…", "connecting");
+    socket = new WebSocket(buildWebSocketUrl());
+
+    socket.addEventListener("open", () => {
+      setStatus("Connected", "connected");
+    });
+
+    socket.addEventListener("message", (event) => {
+      term.write(event.data);
+    });
+
+    socket.addEventListener("error", () => {
+      setStatus("Connection error", "error");
+    });
+
+    socket.addEventListener("close", () => {
+      setStatus("Reconnecting…", "disconnected");
+      scheduleReconnect();
+    });
+  }
+
+  term.onData((data) => {
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "input", data }));
+    }
+  });
+
+  term.onResize(({ cols, rows }) => {
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "resize", cols, rows }));
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    fitAddon.fit();
+  });
+
+  window.addEventListener("beforeunload", () => {
+    clearReconnectTimeout();
+    socket?.close();
+  });
+
+  connect();
+`;
 
 const TERMINAL_PAGE_HTML = `<!doctype html>
 <html lang="en">
@@ -103,123 +218,13 @@ const TERMINAL_PAGE_HTML = `<!doctype html>
     </div>
 
     <script type="module">
-      import { FitAddon, Terminal, init } from "/dist/ghostty-web.js";
-
-      const statusElement = document.getElementById("terminal-status");
-      const terminalContainer = document.getElementById("terminal");
-      const hashParams = new URLSearchParams(window.location.hash.slice(1));
-      const token = hashParams.get("token");
-
-      function setStatus(label, state) {
-        statusElement.textContent = label;
-        statusElement.dataset.state = state;
-      }
-
-      if (!token) {
-        setStatus("Missing token", "error");
-        throw new Error("Missing terminal token");
-      }
-
-      await init();
-
-      const term = new Terminal({
-        cursorBlink: true,
-        fontSize: 13,
-        fontFamily:
-          'Geist Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-        scrollback: 10000,
-        theme: {
-          background: "#09090b",
-          foreground: "#fafafa",
-        },
-      });
-
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      await term.open(terminalContainer);
-      fitAddon.fit();
-      fitAddon.observeResize();
-
-      let socket;
-      let reconnectTimeoutId = null;
-
-      function clearReconnectTimeout() {
-        if (reconnectTimeoutId !== null) {
-          window.clearTimeout(reconnectTimeoutId);
-          reconnectTimeoutId = null;
-        }
-      }
-
-      function scheduleReconnect() {
-        clearReconnectTimeout();
-        reconnectTimeoutId = window.setTimeout(() => {
-          reconnectTimeoutId = null;
-          connect();
-        }, 1500);
-      }
-
-      function buildWebSocketUrl() {
-        const protocol =
-          window.location.protocol === "https:" ? "wss:" : "ws:";
-        const url = new URL(
-          protocol + "//" + window.location.host + "/ws",
-        );
-        url.searchParams.set("cols", String(term.cols));
-        url.searchParams.set("rows", String(term.rows));
-        url.searchParams.set("token", token);
-        return url.toString();
-      }
-
-      function connect() {
-        setStatus("Connecting…", "connecting");
-        socket = new WebSocket(buildWebSocketUrl());
-
-        socket.addEventListener("open", () => {
-          setStatus("Connected", "connected");
-        });
-
-        socket.addEventListener("message", (event) => {
-          term.write(event.data);
-        });
-
-        socket.addEventListener("error", () => {
-          setStatus("Connection error", "error");
-        });
-
-        socket.addEventListener("close", () => {
-          setStatus("Reconnecting…", "disconnected");
-          scheduleReconnect();
-        });
-      }
-
-      term.onData((data) => {
-        if (socket?.readyState === WebSocket.OPEN) {
-          socket.send(data);
-        }
-      });
-
-      term.onResize(({ cols, rows }) => {
-        if (socket?.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "resize", cols, rows }));
-        }
-      });
-
-      window.addEventListener("resize", () => {
-        fitAddon.fit();
-      });
-
-      window.addEventListener("beforeunload", () => {
-        clearReconnectTimeout();
-        socket?.close();
-      });
-
-      connect();
+${TERMINAL_GATEWAY_CLIENT_SCRIPT}
     </script>
   </body>
 </html>
 `;
 
-const TERMINAL_SERVER_SCRIPT_LINES = [
+const TERMINAL_GATEWAY_SCRIPT_LINES = [
   'import { createReadStream, existsSync, readFileSync } from "node:fs";',
   'import { createServer } from "node:http";',
   'import path from "node:path";',
@@ -229,9 +234,10 @@ const TERMINAL_SERVER_SCRIPT_LINES = [
   'const PORT = Number(process.env.OPEN_HARNESS_TERMINAL_PORT ?? "7681");',
   'const WORKING_DIRECTORY = process.env.OPEN_HARNESS_TERMINAL_CWD ?? "/vercel/sandbox";',
   'const TOKEN_FILE = process.env.OPEN_HARNESS_TERMINAL_TOKEN_FILE ?? "/tmp/open-harness-terminal/token";',
+  'const SESSION_FILE = process.env.OPEN_HARNESS_TERMINAL_SESSION_FILE ?? "/tmp/open-harness-terminal/session-id";',
   'const DIST_DIR = path.join(process.cwd(), "node_modules", "ghostty-web", "dist");',
   'const GHOSTTY_WASM_PATH = path.join(process.cwd(), "node_modules", "ghostty-web", "ghostty-vt.wasm");',
-  `const SERVER_VERSION = ${JSON.stringify(TERMINAL_SERVER_VERSION)};`,
+  `const GATEWAY_VERSION = ${JSON.stringify(TERMINAL_GATEWAY_VERSION)};`,
   `const INDEX_HTML = ${JSON.stringify(TERMINAL_PAGE_HTML)};`,
   "",
   "const MIME_TYPES = new Map([",
@@ -273,17 +279,26 @@ const TERMINAL_SERVER_SCRIPT_LINES = [
   "  createReadStream(filePath).pipe(res);",
   "}",
   "",
-  "function getToken() {",
+  "function readTrimmedFile(filePath) {",
   "  try {",
-  '    return readFileSync(TOKEN_FILE, "utf8").trim();',
+  '    return readFileSync(filePath, "utf8").trim();',
   "  } catch {",
   '    return "";',
   "  }",
   "}",
   "",
-  "function isAuthorized(token) {",
-  "  const expectedToken = getToken();",
-  "  return expectedToken.length > 0 && token === expectedToken;",
+  "function getLaunchToken() {",
+  "  return readTrimmedFile(TOKEN_FILE);",
+  "}",
+  "",
+  "function getGatewaySessionId() {",
+  "  return readTrimmedFile(SESSION_FILE);",
+  "}",
+  "",
+  "function isAuthorized(token, sessionId) {",
+  "  const expectedToken = getLaunchToken();",
+  "  const expectedSessionId = getGatewaySessionId();",
+  "  return expectedToken.length > 0 && expectedSessionId.length > 0 && token === expectedToken && sessionId === expectedSessionId;",
   "}",
   "",
   "function clampSize(value, fallback, max) {",
@@ -298,11 +313,65 @@ const TERMINAL_SERVER_SCRIPT_LINES = [
   '  return process.env.SHELL || "/bin/bash";',
   "}",
   "",
+  "const clients = new Set();",
+  "let ptyProcess = null;",
+  "let ptySize = { cols: 120, rows: 32 };",
+  "",
+  "function ensurePty(cols, rows) {",
+  "  if (ptyProcess) {",
+  "    ptyProcess.resize(cols, rows);",
+  "    ptySize = { cols, rows };",
+  "    return ptyProcess;",
+  "  }",
+  "  ptyProcess = pty.spawn(getShell(), [], {",
+  '    name: "xterm-256color",',
+  "    cols,",
+  "    rows,",
+  "    cwd: WORKING_DIRECTORY,",
+  "    env: {",
+  "      ...process.env,",
+  '      COLORTERM: "truecolor",',
+  '      TERM: "xterm-256color",',
+  "    },",
+  "  });",
+  "  ptySize = { cols, rows };",
+  "  ptyProcess.onData((data) => {",
+  "    for (const client of clients) {",
+  "      if (client.readyState === client.OPEN) {",
+  "        client.send(data);",
+  "      }",
+  "    }",
+  "  });",
+  "  ptyProcess.onExit(({ exitCode }) => {",
+  "    for (const client of clients) {",
+  "      if (client.readyState === client.OPEN) {",
+  '        client.send("\r\n\x1B[33mShell exited (code: " + (exitCode ?? 0) + ")\x1B[0m\r\n");',
+  "        client.close();",
+  "      }",
+  "    }",
+  "    clients.clear();",
+  "    ptyProcess = null;",
+  "  });",
+  "  return ptyProcess;",
+  "}",
+  "",
   "const server = createServer((req, res) => {",
   '  const host = req.headers.host ?? ("127.0.0.1:" + PORT);',
   '  const url = new URL(req.url ?? "/", "http://" + host);',
   '  if (url.pathname === "/health") {',
-  "    sendJson(res, 200, { ok: true, version: SERVER_VERSION });",
+  "    sendJson(res, 200, {",
+  "      ok: true,",
+  "      version: GATEWAY_VERSION,",
+  "      sessionId: getGatewaySessionId() || null,",
+  "      attachedClients: clients.size,",
+  "      ptyRunning: ptyProcess !== null,",
+  "    });",
+  "    return;",
+  "  }",
+  '  if (url.pathname === "/session") {',
+  "    sendJson(res, 200, {",
+  "      sessionId: getGatewaySessionId() || null,",
+  "    });",
   "    return;",
   "  }",
   '  if (url.pathname === "/" || url.pathname === "/index.html") {',
@@ -341,7 +410,6 @@ const TERMINAL_SERVER_SCRIPT_LINES = [
   "});",
   "",
   "const wss = new WebSocketServer({ noServer: true });",
-  "const activeSessions = new Map();",
   "",
   'server.on("upgrade", (req, socket, head) => {',
   '  const host = req.headers.host ?? ("127.0.0.1:" + PORT);',
@@ -351,8 +419,9 @@ const TERMINAL_SERVER_SCRIPT_LINES = [
   "    return;",
   "  }",
   '  const token = url.searchParams.get("token") ?? "";',
-  "  if (!isAuthorized(token)) {",
-  '    socket.write("HTTP/1.1 401 Unauthorized\\r\\nConnection: close\\r\\n\\r\\n");',
+  '  const sessionId = url.searchParams.get("session") ?? "";',
+  "  if (!isAuthorized(token, sessionId)) {",
+  '    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");',
   "    socket.destroy();",
   "    return;",
   "  }",
@@ -364,74 +433,46 @@ const TERMINAL_SERVER_SCRIPT_LINES = [
   'wss.on("connection", (ws, req) => {',
   '  const host = req.headers.host ?? ("127.0.0.1:" + PORT);',
   '  const url = new URL(req.url ?? "/", "http://" + host);',
-  '  const cols = clampSize(url.searchParams.get("cols"), 120, 300);',
-  '  const rows = clampSize(url.searchParams.get("rows"), 32, 120);',
-  "  const ptyProcess = pty.spawn(getShell(), [], {",
-  '    name: "xterm-256color",',
-  "    cols,",
-  "    rows,",
-  "    cwd: WORKING_DIRECTORY,",
-  "    env: {",
-  "      ...process.env,",
-  '      COLORTERM: "truecolor",',
-  '      TERM: "xterm-256color",',
-  "    },",
-  "  });",
-  "  activeSessions.set(ws, ptyProcess);",
-  "",
-  "  ptyProcess.onData((data) => {",
-  "    if (ws.readyState === ws.OPEN) {",
-  "      ws.send(data);",
-  "    }",
-  "  });",
-  "",
-  "  ptyProcess.onExit(({ exitCode }) => {",
-  "    if (ws.readyState === ws.OPEN) {",
-  '      ws.send("\\r\\n\\x1b[33mShell exited (code: " + (exitCode ?? 0) + ")\\x1b[0m\\r\\n");',
-  "      ws.close();",
-  "    }",
-  "  });",
-  "",
+  '  const cols = clampSize(url.searchParams.get("cols"), ptySize.cols, 300);',
+  '  const rows = clampSize(url.searchParams.get("rows"), ptySize.rows, 120);',
+  "  const activePty = ensurePty(cols, rows);",
+  "  clients.add(ws);",
   '  ws.on("message", (rawMessage) => {',
   '    const message = rawMessage.toString("utf8");',
-  '    if (message.startsWith("{")) {',
-  "      try {",
-  "        const parsed = JSON.parse(message);",
-  '        if (parsed.type === "resize") {',
-  '          const nextCols = clampSize(String(parsed.cols ?? ""), cols, 300);',
-  '          const nextRows = clampSize(String(parsed.rows ?? ""), rows, 120);',
-  "          ptyProcess.resize(nextCols, nextRows);",
-  "          return;",
-  "        }",
-  "      } catch {",
-  "        // Fall through and write raw message to the PTY.",
+  "    try {",
+  "      const parsed = JSON.parse(message);",
+  '      if (parsed.type === "resize") {',
+  '        const nextCols = clampSize(String(parsed.cols ?? ""), ptySize.cols, 300);',
+  '        const nextRows = clampSize(String(parsed.rows ?? ""), ptySize.rows, 120);',
+  "        activePty.resize(nextCols, nextRows);",
+  "        ptySize = { cols: nextCols, rows: nextRows };",
+  "        return;",
   "      }",
-  "    }",
-  "    ptyProcess.write(message);",
+  '      if (parsed.type === "input" && typeof parsed.data === "string") {',
+  "        activePty.write(parsed.data);",
+  "        return;",
+  "      }",
+  "    } catch {}",
+  "    activePty.write(message);",
   "  });",
-  "",
   '  ws.on("close", () => {',
-  "    const session = activeSessions.get(ws);",
-  "    if (session) {",
-  "      session.kill();",
-  "      activeSessions.delete(ws);",
-  "    }",
+  "    clients.delete(ws);",
   "  });",
-  "",
-  '  ws.on("error", () => {',
-  "    // Ignore transient socket errors from browser disconnects.",
-  "  });",
+  '  ws.on("error", () => {});',
   "});",
   "",
   "function shutdown() {",
-  "  for (const [ws, ptyProcess] of activeSessions.entries()) {",
+  "  for (const client of clients) {",
+  "    try {",
+  "      client.close();",
+  "    } catch {}",
+  "  }",
+  "  clients.clear();",
+  "  if (ptyProcess) {",
   "    try {",
   "      ptyProcess.kill();",
   "    } catch {}",
-  "    try {",
-  "      ws.close();",
-  "    } catch {}",
-  "    activeSessions.delete(ws);",
+  "    ptyProcess = null;",
   "  }",
   "  wss.close();",
   "  server.close(() => process.exit(0));",
@@ -441,8 +482,8 @@ const TERMINAL_SERVER_SCRIPT_LINES = [
   'process.on("SIGTERM", shutdown);',
   "",
   'server.listen(PORT, "0.0.0.0", () => {',
-  '  console.log("[OpenHarnessTerminal] listening on " + PORT);',
+  '  console.log("[OpenHarnessTerminalGateway] listening on " + PORT);',
   "});",
 ];
 
-export const TERMINAL_SERVER_SCRIPT = TERMINAL_SERVER_SCRIPT_LINES.join("\n");
+export const TERMINAL_GATEWAY_SCRIPT = TERMINAL_GATEWAY_SCRIPT_LINES.join("\n");

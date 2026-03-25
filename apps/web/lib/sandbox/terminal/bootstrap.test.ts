@@ -2,7 +2,13 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 mock.module("server-only", () => ({}));
 mock.module("node:crypto", () => ({
-  randomUUID: () => "launch-token",
+  randomUUID: (() => {
+    let callCount = 0;
+    return () => {
+      callCount += 1;
+      return callCount === 1 ? "launch-token" : "gateway-session-token";
+    };
+  })(),
 }));
 mock.module("node:timers/promises", () => ({
   setTimeout: async () => undefined,
@@ -34,10 +40,14 @@ type FakeSandbox = {
 };
 
 let existingPaths = new Set<string>();
-let healthcheckResults: Array<{ ok: boolean; version?: string | null }> = [];
+let healthcheckResults: Array<{
+  ok: boolean;
+  version?: string | null;
+  sessionId?: string | null;
+}> = [];
 let sandboxDomain: string | null = "https://terminal.vercel.run";
 let installShouldFail = false;
-const CURRENT_TERMINAL_SERVER_VERSION = "2026-03-24-dist-assets-v2";
+const CURRENT_TERMINAL_GATEWAY_VERSION = "2026-03-25-gateway-v1";
 const connectCalls: Array<{ state: unknown; options: unknown }> = [];
 const mkdirCalls: Array<{ path: string; options?: { recursive?: boolean } }> =
   [];
@@ -112,7 +122,11 @@ const fetchMock = mock(async () => {
   const nextResult = healthcheckResults.shift();
   if (nextResult?.ok) {
     return new Response(
-      JSON.stringify({ ok: true, version: nextResult.version ?? null }),
+      JSON.stringify({
+        ok: true,
+        version: nextResult.version ?? null,
+        sessionId: nextResult.sessionId ?? null,
+      }),
       { status: 200 },
     );
   }
@@ -166,9 +180,13 @@ describe("bootstrapSessionTerminal", () => {
     expect(writeFileCalls).toHaveLength(0);
   });
 
-  test("writes a fresh launch token and returns the terminal url when the server is already healthy", async () => {
+  test("writes fresh launch credentials and returns the terminal url when the gateway is already healthy", async () => {
     healthcheckResults = [
-      { ok: true, version: CURRENT_TERMINAL_SERVER_VERSION },
+      {
+        ok: true,
+        version: CURRENT_TERMINAL_GATEWAY_VERSION,
+        sessionId: "session-gateway-existing",
+      },
     ];
     const { bootstrapSessionTerminal } = await loadBootstrapModule();
 
@@ -179,35 +197,45 @@ describe("bootstrapSessionTerminal", () => {
 
     expect(result).toEqual({
       status: "ready",
-      terminalUrl: "https://terminal.vercel.run/#token=launch-token",
+      terminalUrl:
+        "https://terminal.vercel.run/#token=launch-token&session=session-gateway-existing",
+      sessionId: "session-gateway-existing",
     });
     expect(connectCalls[0]?.options).toEqual({
       env: {
         OPEN_HARNESS_TERMINAL_CWD: "/vercel/sandbox",
         OPEN_HARNESS_TERMINAL_PORT: "7681",
         OPEN_HARNESS_TERMINAL_TOKEN_FILE: "/tmp/open-harness-terminal/token",
+        OPEN_HARNESS_TERMINAL_SESSION_FILE:
+          "/tmp/open-harness-terminal/session-id",
       },
       ports: [3000, 5173, 4321, 7681],
     });
     expect(writeFileCalls.map((call) => call.path)).toEqual([
       "/tmp/open-harness-terminal/package.json",
-      "/tmp/open-harness-terminal/server.mjs",
+      "/tmp/open-harness-terminal/gateway.mjs",
       "/tmp/open-harness-terminal/token",
+      "/tmp/open-harness-terminal/session-id",
     ]);
     expect(writeFileCalls[2]?.content).toBe("launch-token");
+    expect(writeFileCalls[3]?.content).toBe("session-gateway-session-token");
     expect(execCalls).toHaveLength(0);
     expect(execDetachedCalls).toHaveLength(0);
   });
 
-  test("restarts an already-running terminal server when it is on an older version", async () => {
+  test("restarts an already-running gateway when it is on an older version", async () => {
     existingPaths.add("/tmp/open-harness-terminal/node_modules/ghostty-web");
     existingPaths.add("/tmp/open-harness-terminal/node_modules/ws");
     existingPaths.add(
       "/tmp/open-harness-terminal/node_modules/@lydell/node-pty",
     );
     healthcheckResults = [
-      { ok: true, version: "old-version" },
-      { ok: true, version: CURRENT_TERMINAL_SERVER_VERSION },
+      { ok: true, version: "old-version", sessionId: "old-session" },
+      {
+        ok: true,
+        version: CURRENT_TERMINAL_GATEWAY_VERSION,
+        sessionId: "session-gateway-upgraded",
+      },
     ];
     const { bootstrapSessionTerminal } = await loadBootstrapModule();
 
@@ -220,7 +248,7 @@ describe("bootstrapSessionTerminal", () => {
     expect(execCalls).toEqual([
       {
         command:
-          'pkill -f "[o]pen-harness-terminal-server" || pkill -f "/tmp/open-harness-terminal/[s]erver\\.mjs" || true',
+          'pkill -f "[o]pen-harness-terminal-gateway" || pkill -f "/tmp/open-harness-terminal/[g]ateway\\.mjs" || true',
         cwd: "/vercel/sandbox",
         timeoutMs: 15000,
       },
@@ -228,17 +256,21 @@ describe("bootstrapSessionTerminal", () => {
     expect(execDetachedCalls).toEqual([
       {
         command:
-          'exec -a open-harness-terminal-server node "/tmp/open-harness-terminal/server.mjs" > "/tmp/open-harness-terminal/server.log" 2>&1',
+          'exec -a open-harness-terminal-gateway node "/tmp/open-harness-terminal/gateway.mjs" > "/tmp/open-harness-terminal/gateway.log" 2>&1',
         cwd: "/tmp/open-harness-terminal",
       },
     ]);
   });
 
-  test("installs runtime dependencies and starts the terminal server when health checks fail", async () => {
+  test("installs runtime dependencies and starts the gateway when health checks fail", async () => {
     healthcheckResults = [
       { ok: false },
       { ok: false },
-      { ok: true, version: CURRENT_TERMINAL_SERVER_VERSION },
+      {
+        ok: true,
+        version: CURRENT_TERMINAL_GATEWAY_VERSION,
+        sessionId: "session-gateway-new",
+      },
     ];
     const { bootstrapSessionTerminal } = await loadBootstrapModule();
 
@@ -247,7 +279,12 @@ describe("bootstrapSessionTerminal", () => {
       sandboxState: { type: "vercel", sandboxId: "sbx-1" },
     } as never);
 
-    expect(result.status).toBe("ready");
+    expect(result).toEqual({
+      status: "ready",
+      terminalUrl:
+        "https://terminal.vercel.run/#token=gateway-session-token&session=session-gateway-new",
+      sessionId: "session-gateway-new",
+    });
     expect(execCalls).toEqual([
       {
         command: "npm install --omit=dev --no-audit --no-fund",
@@ -256,7 +293,7 @@ describe("bootstrapSessionTerminal", () => {
       },
       {
         command:
-          'pkill -f "[o]pen-harness-terminal-server" || pkill -f "/tmp/open-harness-terminal/[s]erver\\.mjs" || true',
+          'pkill -f "[o]pen-harness-terminal-gateway" || pkill -f "/tmp/open-harness-terminal/[g]ateway\\.mjs" || true',
         cwd: "/vercel/sandbox",
         timeoutMs: 15000,
       },
@@ -264,7 +301,7 @@ describe("bootstrapSessionTerminal", () => {
     expect(execDetachedCalls).toEqual([
       {
         command:
-          'exec -a open-harness-terminal-server node "/tmp/open-harness-terminal/server.mjs" > "/tmp/open-harness-terminal/server.log" 2>&1',
+          'exec -a open-harness-terminal-gateway node "/tmp/open-harness-terminal/gateway.mjs" > "/tmp/open-harness-terminal/gateway.log" 2>&1',
         cwd: "/tmp/open-harness-terminal",
       },
     ]);

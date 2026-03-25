@@ -26,10 +26,12 @@ let ownedSessionResult: OwnedSessionResult = {
   sessionRecord: { id: "session-1", sandboxState: { type: "vercel" } },
 };
 let bootstrapResult:
-  | { status: "ready"; terminalUrl: string }
+  | { status: "ready"; terminalUrl: string; sessionId: string }
   | { status: "requires_restart"; message: string } = {
   status: "ready",
-  terminalUrl: "https://terminal.vercel.run/#token=test-token",
+  terminalUrl:
+    "https://terminal.vercel.run/#token=test-token&session=session-launch-1",
+  sessionId: "session-launch-1",
 };
 let bootstrapError: Error | null = null;
 const bootstrapCalls: Array<{
@@ -72,7 +74,9 @@ describe("/api/sessions/[sessionId]/terminal", () => {
     };
     bootstrapResult = {
       status: "ready",
-      terminalUrl: "https://terminal.vercel.run/#token=test-token",
+      terminalUrl:
+        "https://terminal.vercel.run/#token=test-token&session=session-launch-1",
+      sessionId: "session-launch-1",
     };
     bootstrapError = null;
     bootstrapCalls.length = 0;
@@ -129,12 +133,15 @@ describe("/api/sessions/[sessionId]/terminal", () => {
     const body = (await response.json()) as {
       status: string;
       terminalUrl: string;
+      sessionId: string;
     };
 
     expect(response.status).toBe(200);
     expect(body).toEqual({
       status: "ready",
-      terminalUrl: "https://terminal.vercel.run/#token=test-token",
+      terminalUrl:
+        "https://terminal.vercel.run/#token=test-token&session=session-launch-1",
+      sessionId: "session-launch-1",
     });
     expect(bootstrapCalls).toEqual([
       { id: "session-1", sandboxState: { type: "vercel" } },

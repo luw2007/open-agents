@@ -10,16 +10,17 @@ import {
   TERMINAL_SANDBOX_PORT,
 } from "../config";
 import {
-  TERMINAL_SERVER_SCRIPT,
-  TERMINAL_SERVER_VERSION,
+  TERMINAL_GATEWAY_SCRIPT,
+  TERMINAL_GATEWAY_VERSION,
 } from "./server-script";
 
 const TERMINAL_RUNTIME_DIR = "/tmp/open-harness-terminal";
-const TERMINAL_PROCESS_NAME = "open-harness-terminal-server";
+const TERMINAL_PROCESS_NAME = "open-harness-terminal-gateway";
 const TERMINAL_PACKAGE_JSON_PATH = `${TERMINAL_RUNTIME_DIR}/package.json`;
-const TERMINAL_SERVER_PATH = `${TERMINAL_RUNTIME_DIR}/server.mjs`;
+const TERMINAL_GATEWAY_PATH = `${TERMINAL_RUNTIME_DIR}/gateway.mjs`;
 const TERMINAL_TOKEN_PATH = `${TERMINAL_RUNTIME_DIR}/token`;
-const TERMINAL_LOG_PATH = `${TERMINAL_RUNTIME_DIR}/server.log`;
+const TERMINAL_SESSION_PATH = `${TERMINAL_RUNTIME_DIR}/session-id`;
+const TERMINAL_LOG_PATH = `${TERMINAL_RUNTIME_DIR}/gateway.log`;
 const TERMINAL_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const TERMINAL_START_ATTEMPTS = 30;
 const TERMINAL_START_INTERVAL_MS = 1_000;
@@ -46,6 +47,7 @@ export type SessionTerminalLaunchResult =
   | {
       status: "ready";
       terminalUrl: string;
+      sessionId: string;
     }
   | {
       status: "requires_restart";
@@ -85,7 +87,7 @@ async function ensureTerminalRuntimeFiles(
       TERMINAL_PACKAGE_JSON,
       "utf-8",
     ),
-    sandbox.writeFile(TERMINAL_SERVER_PATH, TERMINAL_SERVER_SCRIPT, "utf-8"),
+    sandbox.writeFile(TERMINAL_GATEWAY_PATH, TERMINAL_GATEWAY_SCRIPT, "utf-8"),
   ]);
 }
 
@@ -130,6 +132,7 @@ function buildHealthUrl(terminalBaseUrl: string): string {
 type TerminalHealthStatus = {
   ok: boolean;
   version: string | null;
+  sessionId: string | null;
 };
 
 async function getTerminalHealthStatus(
@@ -140,35 +143,39 @@ async function getTerminalHealthStatus(
       cache: "no-store",
     });
     if (!response.ok) {
-      return { ok: false, version: null };
+      return { ok: false, version: null, sessionId: null };
     }
 
     try {
-      const body = (await response.json()) as { version?: unknown };
+      const body = (await response.json()) as {
+        version?: unknown;
+        sessionId?: unknown;
+      };
       return {
         ok: true,
         version: typeof body.version === "string" ? body.version : null,
+        sessionId: typeof body.sessionId === "string" ? body.sessionId : null,
       };
     } catch {
-      return { ok: true, version: null };
+      return { ok: true, version: null, sessionId: null };
     }
   } catch {
-    return { ok: false, version: null };
+    return { ok: false, version: null, sessionId: null };
   }
 }
 
 function hasExpectedTerminalVersion(status: TerminalHealthStatus): boolean {
-  return status.ok && status.version === TERMINAL_SERVER_VERSION;
+  return status.ok && status.version === TERMINAL_GATEWAY_VERSION;
 }
 
 async function waitForTerminalHealthcheck(
   terminalBaseUrl: string,
   attempts: number,
-): Promise<boolean> {
+): Promise<TerminalHealthStatus | null> {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const status = await getTerminalHealthStatus(terminalBaseUrl);
     if (hasExpectedTerminalVersion(status)) {
-      return true;
+      return status;
     }
 
     if (attempt < attempts - 1) {
@@ -176,53 +183,59 @@ async function waitForTerminalHealthcheck(
     }
   }
 
-  return false;
+  return null;
 }
 
-async function stopTerminalServer(
+async function stopTerminalGateway(
   sandbox: Awaited<ReturnType<typeof connectSandbox>>,
 ): Promise<void> {
   const stopResult = await sandbox.exec(
-    `pkill -f "[${TERMINAL_PROCESS_NAME[0]}]${TERMINAL_PROCESS_NAME.slice(1)}" || pkill -f "${TERMINAL_RUNTIME_DIR}/[s]erver\\.mjs" || true`,
+    `pkill -f "[${TERMINAL_PROCESS_NAME[0]}]${TERMINAL_PROCESS_NAME.slice(1)}" || pkill -f "${TERMINAL_RUNTIME_DIR}/[g]ateway\\.mjs" || true`,
     DEFAULT_WORKING_DIRECTORY,
     15_000,
   );
 
   if (!stopResult.success) {
     throw new Error(
-      `Failed to stop the terminal server: ${getCommandError(stopResult)}`,
+      `Failed to stop the terminal gateway: ${getCommandError(stopResult)}`,
     );
   }
 }
 
-async function startTerminalServer(
+async function startTerminalGateway(
   sandbox: Awaited<ReturnType<typeof connectSandbox>>,
   terminalBaseUrl: string,
-): Promise<void> {
+): Promise<TerminalHealthStatus> {
   if (!sandbox.execDetached) {
     throw new Error("Detached execution is not supported by this sandbox");
   }
 
   await sandbox.execDetached(
-    `exec -a ${TERMINAL_PROCESS_NAME} node "${TERMINAL_SERVER_PATH}" > "${TERMINAL_LOG_PATH}" 2>&1`,
+    `exec -a ${TERMINAL_PROCESS_NAME} node "${TERMINAL_GATEWAY_PATH}" > "${TERMINAL_LOG_PATH}" 2>&1`,
     TERMINAL_RUNTIME_DIR,
   );
 
-  const isHealthy = await waitForTerminalHealthcheck(
+  const status = await waitForTerminalHealthcheck(
     terminalBaseUrl,
     TERMINAL_START_ATTEMPTS,
   );
 
-  if (!isHealthy) {
+  if (!status) {
     throw new Error(
-      `Timed out waiting for the terminal server on port ${TERMINAL_SANDBOX_PORT}`,
+      `Timed out waiting for the terminal gateway on port ${TERMINAL_SANDBOX_PORT}`,
     );
   }
+
+  return status;
 }
 
-function buildTerminalUrl(terminalBaseUrl: string, token: string): string {
+function buildTerminalUrl(
+  terminalBaseUrl: string,
+  token: string,
+  sessionId: string,
+): string {
   const url = new URL(terminalBaseUrl);
-  url.hash = new URLSearchParams({ token }).toString();
+  url.hash = new URLSearchParams({ token, session: sessionId }).toString();
   return url.toString();
 }
 
@@ -238,6 +251,7 @@ export async function bootstrapSessionTerminal(
       OPEN_HARNESS_TERMINAL_CWD: DEFAULT_WORKING_DIRECTORY,
       OPEN_HARNESS_TERMINAL_PORT: String(TERMINAL_SANDBOX_PORT),
       OPEN_HARNESS_TERMINAL_TOKEN_FILE: TERMINAL_TOKEN_PATH,
+      OPEN_HARNESS_TERMINAL_SESSION_FILE: TERMINAL_SESSION_PATH,
     },
     ports: DEFAULT_SANDBOX_PORTS,
   });
@@ -256,17 +270,31 @@ export async function bootstrapSessionTerminal(
   await ensureTerminalRuntimeFiles(sandbox);
 
   const launchToken = randomUUID();
-  await sandbox.writeFile(TERMINAL_TOKEN_PATH, launchToken, "utf-8");
+  const gatewaySessionId = `session-${randomUUID()}`;
+  await Promise.all([
+    sandbox.writeFile(TERMINAL_TOKEN_PATH, launchToken, "utf-8"),
+    sandbox.writeFile(TERMINAL_SESSION_PATH, gatewaySessionId, "utf-8"),
+  ]);
 
   const currentHealth = await getTerminalHealthStatus(terminalBaseUrl);
+  let activeSessionId = gatewaySessionId;
+
   if (!hasExpectedTerminalVersion(currentHealth)) {
     await ensureTerminalDependencies(sandbox);
-    await stopTerminalServer(sandbox);
-    await startTerminalServer(sandbox, terminalBaseUrl);
+    await stopTerminalGateway(sandbox);
+    const startedHealth = await startTerminalGateway(sandbox, terminalBaseUrl);
+    activeSessionId = startedHealth.sessionId ?? gatewaySessionId;
+  } else {
+    activeSessionId = currentHealth.sessionId ?? gatewaySessionId;
   }
 
   return {
     status: "ready",
-    terminalUrl: buildTerminalUrl(terminalBaseUrl, launchToken),
+    terminalUrl: buildTerminalUrl(
+      terminalBaseUrl,
+      launchToken,
+      activeSessionId,
+    ),
+    sessionId: activeSessionId,
   };
 }

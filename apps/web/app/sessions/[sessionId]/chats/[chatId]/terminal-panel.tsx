@@ -76,12 +76,14 @@ function InlineTerminal({ terminalUrl }: { terminalUrl: string }) {
       }
 
       const terminalUrlObject = new URL(terminalUrl);
-      const token = terminalUrlObject.hash.startsWith("#")
-        ? new URLSearchParams(terminalUrlObject.hash.slice(1)).get("token")
+      const hashParams = terminalUrlObject.hash.startsWith("#")
+        ? new URLSearchParams(terminalUrlObject.hash.slice(1))
         : null;
+      const token = hashParams?.get("token") ?? null;
+      const sessionId = hashParams?.get("session") ?? null;
 
-      if (!token) {
-        term.write("\r\nMissing terminal token.\r\n");
+      if (!token || !sessionId) {
+        term.write("\r\nMissing terminal session credentials.\r\n");
         term.dispose();
         return;
       }
@@ -103,6 +105,7 @@ function InlineTerminal({ terminalUrl }: { terminalUrl: string }) {
         url.searchParams.set("cols", String(term.cols));
         url.searchParams.set("rows", String(term.rows));
         url.searchParams.set("token", token);
+        url.searchParams.set("session", sessionId);
         return url.toString();
       };
 
@@ -140,7 +143,7 @@ function InlineTerminal({ terminalUrl }: { terminalUrl: string }) {
 
       const onDataDisposable = term.onData((data) => {
         if (socket?.readyState === WebSocket.OPEN) {
-          socket.send(data);
+          socket.send(JSON.stringify({ type: "input", data }));
         }
       });
 
