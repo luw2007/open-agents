@@ -4,6 +4,13 @@ function normalizeWorkspaceFilePath(filePath: string): string {
   return filePath.replaceAll("\\", "/").trim();
 }
 
+function encodeWorkspaceFilePath(filePath: string): string {
+  return normalizeWorkspaceFilePath(filePath)
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
 function decodeWorkspaceFilePath(filePath: string): string {
   try {
     return decodeURIComponent(filePath);
@@ -13,7 +20,7 @@ function decodeWorkspaceFilePath(filePath: string): string {
 }
 
 export function buildWorkspaceFileHref(filePath: string): string {
-  return `${WORKSPACE_FILE_HREF_PREFIX}${normalizeWorkspaceFilePath(filePath)}`;
+  return `${WORKSPACE_FILE_HREF_PREFIX}${encodeWorkspaceFilePath(filePath)}`;
 }
 
 export function parseWorkspaceFileHref(

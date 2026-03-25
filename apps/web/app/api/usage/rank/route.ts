@@ -9,7 +9,7 @@ export interface LeaderboardRankResponse {
 }
 
 /**
- * GET /api/usage/rank — Return the current user's rank in their domain leaderboard.
+ * GET /api/usage/rank — Return the current user's rank in their all-time domain leaderboard.
  * Returns `null` JSON body when the user has no eligible domain.
  */
 export async function GET(req: NextRequest) {
@@ -19,7 +19,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const leaderboard = await getUsageDomainLeaderboard(session.user.email);
+    const leaderboard = await getUsageDomainLeaderboard(session.user.email, {
+      unbounded: true,
+    });
     if (!leaderboard || leaderboard.rows.length === 0) {
       return Response.json(null);
     }

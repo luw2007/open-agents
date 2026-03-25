@@ -23,6 +23,7 @@ interface UsageDomainLeaderboardQueryRow {
 export interface UsageDomainLeaderboardOptions {
   days?: number;
   range?: UsageDateRange;
+  unbounded?: boolean;
 }
 
 function buildUsageDomainLeaderboardWhereClause(
@@ -31,6 +32,10 @@ function buildUsageDomainLeaderboardWhereClause(
 ) {
   if (options?.range) {
     return sql`${users.email} is not null and lower(split_part(${users.email}, '@', 2)) = ${domain} and date(${usageEvents.createdAt}) >= ${options.range.from} and date(${usageEvents.createdAt}) <= ${options.range.to}`;
+  }
+
+  if (options?.unbounded) {
+    return sql`${users.email} is not null and lower(split_part(${users.email}, '@', 2)) = ${domain}`;
   }
 
   const days = options?.days ?? 280;

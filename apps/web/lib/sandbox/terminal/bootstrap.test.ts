@@ -220,7 +220,7 @@ describe("bootstrapSessionTerminal", () => {
     expect(execCalls).toEqual([
       {
         command:
-          'pkill -f "[o]pen-harness-terminal-server" || pkill -f "[s]erver.mjs" || true',
+          'pkill -f "[o]pen-harness-terminal-server" || pkill -f "/tmp/open-harness-terminal/[s]erver\\.mjs" || true',
         cwd: "/vercel/sandbox",
         timeoutMs: 15000,
       },
@@ -228,7 +228,7 @@ describe("bootstrapSessionTerminal", () => {
     expect(execDetachedCalls).toEqual([
       {
         command:
-          'exec -a open-harness-terminal-server node server.mjs > "/tmp/open-harness-terminal/server.log" 2>&1',
+          'exec -a open-harness-terminal-server node "/tmp/open-harness-terminal/server.mjs" > "/tmp/open-harness-terminal/server.log" 2>&1',
         cwd: "/tmp/open-harness-terminal",
       },
     ]);
@@ -256,7 +256,7 @@ describe("bootstrapSessionTerminal", () => {
       },
       {
         command:
-          'pkill -f "[o]pen-harness-terminal-server" || pkill -f "[s]erver.mjs" || true',
+          'pkill -f "[o]pen-harness-terminal-server" || pkill -f "/tmp/open-harness-terminal/[s]erver\\.mjs" || true',
         cwd: "/vercel/sandbox",
         timeoutMs: 15000,
       },
@@ -264,7 +264,7 @@ describe("bootstrapSessionTerminal", () => {
     expect(execDetachedCalls).toEqual([
       {
         command:
-          'exec -a open-harness-terminal-server node server.mjs > "/tmp/open-harness-terminal/server.log" 2>&1',
+          'exec -a open-harness-terminal-server node "/tmp/open-harness-terminal/server.mjs" > "/tmp/open-harness-terminal/server.log" 2>&1',
         cwd: "/tmp/open-harness-terminal",
       },
     ]);

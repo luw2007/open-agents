@@ -13,10 +13,16 @@ describe("assistant file links", () => {
     );
 
     expect(href).toBe(
-      "#workspace-file=apps/web/app/sessions/[sessionId]/page.tsx",
+      "#workspace-file=apps/web/app/sessions/%5BsessionId%5D/page.tsx",
     );
     expect(parseWorkspaceFileHref(href)).toBe(
       "apps/web/app/sessions/[sessionId]/page.tsx",
+    );
+  });
+
+  test("encodes paths with spaces while preserving repo-relative segments", () => {
+    expect(buildWorkspaceFileHref("apps/web/lib/test file.ts")).toBe(
+      "#workspace-file=apps/web/lib/test%20file.ts",
     );
   });
 

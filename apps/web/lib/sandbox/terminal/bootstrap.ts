@@ -183,7 +183,7 @@ async function stopTerminalServer(
   sandbox: Awaited<ReturnType<typeof connectSandbox>>,
 ): Promise<void> {
   const stopResult = await sandbox.exec(
-    `pkill -f "[${TERMINAL_PROCESS_NAME[0]}]${TERMINAL_PROCESS_NAME.slice(1)}" || pkill -f "[s]erver.mjs" || true`,
+    `pkill -f "[${TERMINAL_PROCESS_NAME[0]}]${TERMINAL_PROCESS_NAME.slice(1)}" || pkill -f "${TERMINAL_RUNTIME_DIR}/[s]erver\\.mjs" || true`,
     DEFAULT_WORKING_DIRECTORY,
     15_000,
   );
@@ -204,7 +204,7 @@ async function startTerminalServer(
   }
 
   await sandbox.execDetached(
-    `exec -a ${TERMINAL_PROCESS_NAME} node server.mjs > "${TERMINAL_LOG_PATH}" 2>&1`,
+    `exec -a ${TERMINAL_PROCESS_NAME} node "${TERMINAL_SERVER_PATH}" > "${TERMINAL_LOG_PATH}" 2>&1`,
     TERMINAL_RUNTIME_DIR,
   );
 

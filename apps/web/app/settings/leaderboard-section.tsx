@@ -35,12 +35,14 @@ const RANGE_OPTIONS: { value: LeaderboardRange; label: string }[] = [
   { value: "all", label: "All time" },
 ];
 
-function buildUsagePath(range: LeaderboardRange): string {
+export function buildLeaderboardUsagePath(
+  range: LeaderboardRange,
+  now = new Date(),
+): string {
   if (range === "all") {
-    return "/api/usage";
+    return "/api/usage?leaderboardRange=all";
   }
 
-  const now = new Date();
   const to = formatDateOnly(now);
 
   let fromDate: Date;
@@ -121,7 +123,7 @@ export function LeaderboardSection() {
   const userId = session?.user?.id;
   const [range, setRange] = useState<LeaderboardRange>("all");
 
-  const usagePath = useMemo(() => buildUsagePath(range), [range]);
+  const usagePath = useMemo(() => buildLeaderboardUsagePath(range), [range]);
 
   const { data, isLoading, error } = useSWR<UsageResponse>(usagePath, fetcher);
 
