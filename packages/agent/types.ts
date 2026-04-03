@@ -3,6 +3,7 @@ import type { LanguageModel } from "ai";
 import { z } from "zod";
 import type { AgentSandboxContext } from "./open-harness-agent";
 import type { SkillMetadata } from "./skills/types";
+import type { RuntimeSubagentProfile } from "./subagents";
 
 export const todoStatusSchema = z.enum(["pending", "in_progress", "completed"]);
 export type TodoStatus = z.infer<typeof todoStatusSchema>;
@@ -20,7 +21,7 @@ export interface AgentContext {
   sandbox: AgentSandboxContext;
   skills?: SkillMetadata[];
   model: LanguageModel;
-  subagentModel?: LanguageModel;
+  subagentProfiles?: RuntimeSubagentProfile[];
 }
 
 export interface SandboxExecutionContext {

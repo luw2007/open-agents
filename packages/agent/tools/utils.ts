@@ -1,6 +1,8 @@
 import { connectSandbox, type Sandbox } from "@open-harness/sandbox";
 import type { LanguageModel, ModelMessage } from "ai";
 import * as path from "path";
+import type { SkillMetadata } from "../skills/types";
+import type { RuntimeSubagentProfile } from "../subagents";
 import type { AgentContext } from "../types";
 
 function isAgentContext(value: unknown): value is AgentContext {
@@ -146,25 +148,40 @@ export function getModel(
   return context.model;
 }
 
-/**
- * Get subagent model from experimental context, falling back to the main model.
- * Returns the dedicated subagent model if configured, otherwise the main agent model.
- */
-export function getSubagentModel(
+export function getSkills(
   experimental_context: unknown,
   toolName?: string,
-): LanguageModel {
+): SkillMetadata[] {
   const context = isAgentContext(experimental_context)
     ? experimental_context
     : undefined;
-  if (!context?.model) {
+
+  if (!context) {
     const toolInfo = toolName ? ` (tool: ${toolName})` : "";
     throw new Error(
-      `Model not initialized in context${toolInfo}. ` +
-        "Ensure the agent's prepareCall sets experimental_context: { model, ... }",
+      `Agent context not initialized${toolInfo}. Ensure the agent's prepareCall sets experimental_context.`,
     );
   }
-  return context.subagentModel ?? context.model;
+
+  return context.skills ?? [];
+}
+
+export function getSubagentProfiles(
+  experimental_context: unknown,
+  toolName?: string,
+): RuntimeSubagentProfile[] {
+  const context = isAgentContext(experimental_context)
+    ? experimental_context
+    : undefined;
+
+  if (!context) {
+    const toolInfo = toolName ? ` (tool: ${toolName})` : "";
+    throw new Error(
+      `Agent context not initialized${toolInfo}. Ensure the agent's prepareCall sets experimental_context.`,
+    );
+  }
+
+  return context.subagentProfiles ?? [];
 }
 
 /**

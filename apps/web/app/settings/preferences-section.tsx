@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { CustomSubagentProfile } from "@open-harness/agent/subagents/profiles";
 import { type ThemePreference, useTheme } from "@/app/providers";
+import { SubagentProfilesSection } from "@/app/settings/subagent-profiles-section";
 import {
   DEFAULT_SANDBOX_TYPE,
   type SandboxType,
@@ -210,6 +212,20 @@ export function PreferencesSection() {
     }
   };
 
+  const handleSubagentProfilesSave = async (
+    subagentProfiles: CustomSubagentProfile[],
+  ) => {
+    setIsSaving(true);
+    try {
+      await updatePreferences({ subagentProfiles });
+    } catch (error) {
+      console.error("Failed to update subagent profiles:", error);
+      throw error;
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   if (loading) {
     return <PreferencesSectionSkeleton />;
   }
@@ -285,10 +301,25 @@ export function PreferencesSection() {
             onChange={handleSubagentModelChange}
           />
           <p className="text-xs text-muted-foreground">
-            The AI model used for explorer and executor subagents. Defaults to
-            the main model if not set.
+            The AI model used for the built-in Explore subagent and as the
+            default model for new custom subagents.
           </p>
         </div>
+
+        <SubagentProfilesSection
+          profiles={preferences?.subagentProfiles ?? []}
+          modelItems={subagentModelOptions.map((option) => ({
+            id: option.id,
+            label: option.label,
+            description: option.description,
+            isVariant: option.isVariant,
+          }))}
+          defaultModelId={
+            preferences?.defaultSubagentModelId ?? selectedDefaultModelId
+          }
+          disabled={isSaving || modelOptionsLoading}
+          onSave={handleSubagentProfilesSave}
+        />
 
         <div className="grid gap-2">
           <Label htmlFor="sandbox">Default Sandbox</Label>

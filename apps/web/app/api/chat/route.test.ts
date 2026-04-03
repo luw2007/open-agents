@@ -32,8 +32,19 @@ let compareAndSetDefaultResult = true;
 let compareAndSetResults: boolean[] = [];
 let startCalls: unknown[][] = [];
 let preferencesState = {
+  defaultSubagentModelId: null as string | null,
   autoCommitPush: true,
   autoCreatePr: false,
+  subagentProfiles: [] as Array<{
+    id: string;
+    name: string;
+    model: string;
+    customPrompt: string;
+    skills: Array<{ id: string; args?: string }>;
+    allowedTools: Array<
+      "read" | "write" | "edit" | "grep" | "glob" | "bash" | "web_fetch"
+    >;
+  }>,
   modelVariants: [],
 };
 
@@ -111,6 +122,28 @@ mock.module("@/lib/chat/create-cancelable-readable-stream", () => ({
 mock.module("@open-harness/agent", () => ({
   discoverSkills: async () => [],
   gateway: () => "mock-model",
+}));
+
+mock.module("@open-harness/agent/model-selection", () => ({
+  AgentModelSelection: {},
+}));
+
+mock.module("@open-harness/agent/subagents/explorer", () => ({
+  createBuiltInExploreSubagentProfile: ({ model }: { model: unknown }) => ({
+    id: "explore",
+    name: "Explore",
+    description: "Built-in explore profile",
+    model,
+    customPrompt: "Read-only exploration",
+    skills: [],
+    allowedTools: ["read", "grep", "glob", "bash"],
+    builtIn: true,
+  }),
+}));
+
+mock.module("@open-harness/agent/subagents/profiles", () => ({
+  getSubagentProfileDescription: ({ customPrompt }: { customPrompt: string }) =>
+    customPrompt || "Custom subagent configured by the user.",
 }));
 
 mock.module("@open-harness/sandbox", () => ({
@@ -232,8 +265,10 @@ describe("/api/chat route", () => {
     compareAndSetResults = [];
     startCalls = [];
     preferencesState = {
+      defaultSubagentModelId: null,
       autoCommitPush: true,
       autoCreatePr: false,
+      subagentProfiles: [],
       modelVariants: [],
     };
     compareAndSetChatActiveStreamIdSpy.mockClear();
@@ -286,6 +321,38 @@ describe("/api/chat route", () => {
         maxSteps: 500,
         agentOptions: expect.objectContaining({
           customInstructions: assistantFileLinkPrompt,
+        }),
+      }),
+    ]);
+  });
+
+  test("passes built-in and custom subagent profiles into agent options", async () => {
+    const { POST } = await routeModulePromise;
+    preferencesState.subagentProfiles = [
+      {
+        id: "frontend-design",
+        name: "Frontend Design",
+        model: "openai/gpt-5",
+        customPrompt: "Focus on polished UI work.",
+        skills: [{ id: "frontend-design" }],
+        allowedTools: ["read", "write", "edit", "grep", "glob", "bash"],
+      },
+    ];
+
+    const response = await POST(createValidRequest());
+
+    expect(response.ok).toBe(true);
+    expect(startCalls).toHaveLength(1);
+    expect(startCalls[0]?.[1]).toEqual([
+      expect.objectContaining({
+        agentOptions: expect.objectContaining({
+          subagentProfiles: [
+            expect.objectContaining({ id: "explore", builtIn: true }),
+            expect.objectContaining({
+              id: "frontend-design",
+              builtIn: false,
+            }),
+          ],
         }),
       }),
     ]);

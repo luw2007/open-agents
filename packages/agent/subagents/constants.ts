@@ -20,15 +20,10 @@ export const SUBAGENT_COMPLETE_TASK_RULES = `### ALWAYS COMPLETE THE TASK
 - Do not stop mid-task or hand back partial work
 - If one approach fails, try alternative approaches before giving up`;
 
-/**
- * Response format header shared by all subagents.
- * Each subagent appends its own example after this block.
- */
+/** Summary-only response format shared by generic subagents. */
 export const SUBAGENT_RESPONSE_FORMAT = `### FINAL RESPONSE FORMAT (MANDATORY)
-Your final message MUST contain exactly two sections:
-
-1. **Summary**: A brief (2-4 sentences) description of what you actually did
-2. **Answer**: The direct answer to the original task/question`;
+Your final message MUST be a short plain-text summary of what you actually accomplished.
+Do not include section headers such as "Summary" or "Answer".`;
 
 /** Validation rules for subagents that modify files. */
 export const SUBAGENT_VALIDATE_RULES = `### VALIDATE YOUR CHANGES
@@ -51,4 +46,4 @@ Use workspace-relative paths for all file operations.`;
 export const SUBAGENT_REMINDER = `## REMINDER
 - You CANNOT ask questions - no one will respond
 - Complete the task fully before returning
-- Your final message MUST include both a **Summary** of what you did AND the **Answer** to the task`;
+- Your final message MUST be a short plain-text summary of what you accomplished`;

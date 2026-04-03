@@ -1,35 +1,79 @@
-import { designSubagent } from "./design";
-import { executorSubagent } from "./executor";
-import { explorerSubagent } from "./explorer";
+import type { OpenHarnessAgentModelInput } from "../model-selection";
+import {
+  BUILT_IN_EXPLORE_SUBAGENT_ALLOWED_TOOLS,
+  BUILT_IN_EXPLORE_SUBAGENT_DESCRIPTION,
+  BUILT_IN_EXPLORE_SUBAGENT_ID,
+  BUILT_IN_EXPLORE_SUBAGENT_NAME,
+  createBuiltInExploreSubagentProfile,
+} from "./explorer";
+import {
+  buildSubagentSummaryLines,
+  getSubagentProfileDescription,
+  type RuntimeSubagentProfile,
+  type SubagentProfileSummary,
+} from "./profiles";
 
-export const SUBAGENT_REGISTRY = {
-  explorer: {
-    shortDescription:
-      "Use for read-only codebase exploration, tracing behavior, and answering questions without changing files",
-    agent: explorerSubagent,
+export const BUILT_IN_SUBAGENT_METADATA = [
+  {
+    id: BUILT_IN_EXPLORE_SUBAGENT_ID,
+    name: BUILT_IN_EXPLORE_SUBAGENT_NAME,
+    description: BUILT_IN_EXPLORE_SUBAGENT_DESCRIPTION,
+    allowedTools: [...BUILT_IN_EXPLORE_SUBAGENT_ALLOWED_TOOLS],
   },
-  executor: {
-    shortDescription:
-      "Use for well-scoped implementation work, including edits, scaffolding, refactors, and other file changes",
-    agent: executorSubagent,
-  },
-  design: {
-    shortDescription:
-      "Use for creating distinctive, production-grade frontend interfaces with high design quality. Generates creative, polished code that avoids generic AI aesthetics.",
-    agent: designSubagent,
-  },
-} as const;
+] as const;
 
-export const SUBAGENT_TYPES = Object.keys(SUBAGENT_REGISTRY) as [
-  keyof typeof SUBAGENT_REGISTRY,
-  ...(keyof typeof SUBAGENT_REGISTRY)[],
-];
+export function createDefaultSubagentProfiles(params: {
+  exploreModel: OpenHarnessAgentModelInput;
+}): RuntimeSubagentProfile[] {
+  return [createBuiltInExploreSubagentProfile({ model: params.exploreModel })];
+}
 
-export type SubagentType = keyof typeof SUBAGENT_REGISTRY;
+export function mergeSubagentProfiles(
+  builtInProfiles: readonly RuntimeSubagentProfile[],
+  customProfiles: readonly RuntimeSubagentProfile[] = [],
+): RuntimeSubagentProfile[] {
+  const mergedProfiles: RuntimeSubagentProfile[] = [];
+  const seenIds = new Set<string>();
 
-export function buildSubagentSummaryLines(): string {
-  return SUBAGENT_TYPES.map((type) => {
-    const subagent = SUBAGENT_REGISTRY[type];
-    return `- \`${type}\` - ${subagent.shortDescription}`;
-  }).join("\n");
+  for (const profile of [...builtInProfiles, ...customProfiles]) {
+    const normalizedId = profile.id.toLowerCase();
+    if (seenIds.has(normalizedId)) {
+      continue;
+    }
+
+    seenIds.add(normalizedId);
+    mergedProfiles.push(profile);
+  }
+
+  return mergedProfiles;
+}
+
+export function toSubagentProfileSummaries(
+  profiles: readonly RuntimeSubagentProfile[],
+): SubagentProfileSummary[] {
+  return profiles.map((profile) => ({
+    id: profile.id,
+    name: profile.name,
+    description: getSubagentProfileDescription(profile),
+  }));
+}
+
+export function buildRuntimeSubagentSummaryLines(
+  profiles: readonly RuntimeSubagentProfile[],
+): string {
+  return buildSubagentSummaryLines(toSubagentProfileSummaries(profiles));
+}
+
+export function findSubagentProfile(
+  profiles: readonly RuntimeSubagentProfile[],
+  requestedProfile: string,
+): RuntimeSubagentProfile | undefined {
+  const normalizedRequestedProfile = requestedProfile.trim().toLowerCase();
+
+  return profiles.find((profile) => {
+    return (
+      profile.id.toLowerCase() === normalizedRequestedProfile ||
+      profile.name.toLowerCase() === normalizedRequestedProfile
+    );
+  });
 }

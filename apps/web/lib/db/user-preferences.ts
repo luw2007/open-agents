@@ -1,5 +1,9 @@
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import {
+  normalizeCustomSubagentProfiles,
+  type CustomSubagentProfile,
+} from "@open-harness/agent/subagents/profiles";
 import type { SandboxType } from "@/components/sandbox-selector-compact";
 import { modelVariantsSchema, type ModelVariant } from "@/lib/model-variants";
 import { db } from "./client";
@@ -14,6 +18,7 @@ export interface UserPreferencesData {
   defaultDiffMode: DiffMode;
   autoCommitPush: boolean;
   autoCreatePr: boolean;
+  subagentProfiles: CustomSubagentProfile[];
   modelVariants: ModelVariant[];
 }
 
@@ -24,6 +29,7 @@ const DEFAULT_PREFERENCES: UserPreferencesData = {
   defaultDiffMode: "unified",
   autoCommitPush: false,
   autoCreatePr: false,
+  subagentProfiles: [],
   modelVariants: [],
 };
 
@@ -65,6 +71,7 @@ export function toUserPreferencesData(
     | "defaultDiffMode"
     | "autoCommitPush"
     | "autoCreatePr"
+    | "subagentProfiles"
     | "modelVariants"
   >,
 ): UserPreferencesData {
@@ -79,6 +86,7 @@ export function toUserPreferencesData(
     defaultDiffMode: normalizeDiffMode(row?.defaultDiffMode),
     autoCommitPush: row?.autoCommitPush ?? DEFAULT_PREFERENCES.autoCommitPush,
     autoCreatePr: row?.autoCreatePr ?? DEFAULT_PREFERENCES.autoCreatePr,
+    subagentProfiles: normalizeCustomSubagentProfiles(row?.subagentProfiles),
     modelVariants: parsedModelVariants.success ? parsedModelVariants.data : [],
   };
 }
@@ -124,7 +132,6 @@ export async function updateUserPreferences(
     return toUserPreferencesData(updated);
   }
 
-  // Create new preferences
   const [created] = await db
     .insert(userPreferences)
     .values({
@@ -140,6 +147,8 @@ export async function updateUserPreferences(
       autoCommitPush:
         updates.autoCommitPush ?? DEFAULT_PREFERENCES.autoCommitPush,
       autoCreatePr: updates.autoCreatePr ?? DEFAULT_PREFERENCES.autoCreatePr,
+      subagentProfiles:
+        updates.subagentProfiles ?? DEFAULT_PREFERENCES.subagentProfiles,
       modelVariants: updates.modelVariants ?? DEFAULT_PREFERENCES.modelVariants,
     })
     .returning();

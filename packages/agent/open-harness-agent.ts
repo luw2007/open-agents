@@ -2,13 +2,17 @@ import type { SandboxState } from "@open-harness/sandbox";
 import { stepCountIs, ToolLoopAgent, type ToolSet } from "ai";
 import { z } from "zod";
 import { addCacheControl } from "./context-management";
+import { gateway } from "./models";
 import {
-  type GatewayModelId,
-  gateway,
-  type ProviderOptionsByProvider,
-} from "./models";
-
+  normalizeAgentModelSelection,
+  type OpenHarnessAgentModelInput,
+} from "./model-selection";
 import type { SkillMetadata } from "./skills/types";
+import {
+  createDefaultSubagentProfiles,
+  mergeSubagentProfiles,
+  type RuntimeSubagentProfile,
+} from "./subagents";
 import { buildSystemPrompt } from "./system-prompt";
 import {
   askUserQuestionTool,
@@ -24,12 +28,10 @@ import {
   writeFileTool,
 } from "./tools";
 
-export interface AgentModelSelection {
-  id: GatewayModelId;
-  providerOptionsOverrides?: ProviderOptionsByProvider;
-}
-
-export type OpenHarnessAgentModelInput = GatewayModelId | AgentModelSelection;
+export type {
+  AgentModelSelection,
+  OpenHarnessAgentModelInput,
+} from "./model-selection";
 
 export interface AgentSandboxContext {
   state: SandboxState;
@@ -44,23 +46,13 @@ const callOptionsSchema = z.object({
   subagentModel: z.custom<OpenHarnessAgentModelInput>().optional(),
   customInstructions: z.string().optional(),
   skills: z.custom<SkillMetadata[]>().optional(),
+  subagentProfiles: z.custom<RuntimeSubagentProfile[]>().optional(),
 });
 
 export type OpenHarnessAgentCallOptions = z.infer<typeof callOptionsSchema>;
 
 export const defaultModelLabel = "anthropic/claude-opus-4.6" as const;
 export const defaultModel = gateway(defaultModelLabel);
-
-function normalizeAgentModelSelection(
-  selection: OpenHarnessAgentModelInput | undefined,
-  fallbackId: GatewayModelId,
-): AgentModelSelection {
-  if (!selection) {
-    return { id: fallbackId };
-  }
-
-  return typeof selection === "string" ? { id: selection } : selection;
-}
 
 const tools = {
   todo_write: todoWriteTool,
@@ -106,14 +98,16 @@ export const openHarnessAgent = new ToolLoopAgent({
     const callModel = gateway(mainSelection.id, {
       providerOptionsOverrides: mainSelection.providerOptionsOverrides,
     });
-    const subagentModel = subagentSelection
-      ? gateway(subagentSelection.id, {
-          providerOptionsOverrides: subagentSelection.providerOptionsOverrides,
-        })
-      : undefined;
+    const subagentDefaultSelection = subagentSelection ?? mainSelection;
     const customInstructions = options.customInstructions;
     const sandbox = options.sandbox;
     const skills = options.skills ?? [];
+    const subagentProfiles = mergeSubagentProfiles(
+      createDefaultSubagentProfiles({
+        exploreModel: subagentDefaultSelection,
+      }),
+      options.subagentProfiles ?? [],
+    );
 
     const instructions = buildSystemPrompt({
       cwd: sandbox.workingDirectory,
@@ -122,6 +116,7 @@ export const openHarnessAgent = new ToolLoopAgent({
       environmentDetails: sandbox.environmentDetails,
       skills,
       modelId: mainSelection.id,
+      subagentProfiles,
     });
 
     return {
@@ -136,7 +131,7 @@ export const openHarnessAgent = new ToolLoopAgent({
         sandbox,
         skills,
         model: callModel,
-        subagentModel,
+        subagentProfiles,
       },
     };
   },

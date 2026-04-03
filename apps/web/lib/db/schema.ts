@@ -1,3 +1,4 @@
+import type { CustomSubagentProfile } from "@open-harness/agent/subagents/profiles";
 import type { SandboxState } from "@open-harness/sandbox";
 import type { ModelVariant } from "@/lib/model-variants";
 import {
@@ -319,6 +320,10 @@ export const userPreferences = pgTable("user_preferences", {
   }).default("unified"),
   autoCommitPush: boolean("auto_commit_push").notNull().default(false),
   autoCreatePr: boolean("auto_create_pr").notNull().default(false),
+  subagentProfiles: jsonb("subagent_profiles")
+    .$type<CustomSubagentProfile[]>()
+    .notNull()
+    .default([]),
   modelVariants: jsonb("model_variants")
     .$type<ModelVariant[]>()
     .notNull()

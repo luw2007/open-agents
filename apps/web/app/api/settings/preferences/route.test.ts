@@ -8,8 +8,20 @@ const preferencesState = {
   defaultModelId: "anthropic/claude-haiku-4.5",
   defaultSubagentModelId: null as string | null,
   defaultSandboxType: "vercel" as const,
+  defaultDiffMode: "unified" as const,
   autoCommitPush: false,
   autoCreatePr: false,
+  subagentProfiles: [] as Array<{
+    id: string;
+    name: string;
+    model: string;
+    customPrompt: string;
+    skills: Array<{ id: string; args?: string }>;
+    allowedTools: Array<
+      "read" | "write" | "edit" | "grep" | "glob" | "bash" | "web_fetch"
+    >;
+  }>,
+  modelVariants: [],
 };
 
 const updateCalls: Array<Record<string, unknown>> = [];
@@ -59,7 +71,7 @@ describe("/api/settings/preferences", () => {
     expect(body.error).toBe("Not authenticated");
   });
 
-  test("GET returns preferences including autoCommitPush and autoCreatePr", async () => {
+  test("GET returns preferences including subagentProfiles", async () => {
     const { GET } = await routeModulePromise;
 
     const response = await GET();
@@ -71,6 +83,7 @@ describe("/api/settings/preferences", () => {
     expect(body.preferences.autoCommitPush).toBe(false);
     expect(body.preferences.autoCreatePr).toBe(false);
     expect(body.preferences.defaultSandboxType).toBe("vercel");
+    expect(body.preferences.subagentProfiles).toEqual([]);
   });
 
   test("PATCH rejects invalid sandbox types", async () => {
@@ -142,6 +155,68 @@ describe("/api/settings/preferences", () => {
     expect(updateCalls).toHaveLength(1);
     expect(updateCalls[0]).toEqual({ autoCreatePr: true });
     expect(body.preferences.autoCreatePr).toBe(true);
+  });
+
+  test("PATCH rejects invalid subagentProfiles values", async () => {
+    const { PATCH } = await routeModulePromise;
+
+    const response = await PATCH(
+      createJsonRequest("PATCH", {
+        subagentProfiles: [{ id: "Bad Id", name: "Bad", model: "" }],
+      }),
+    );
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe("Invalid subagentProfiles value");
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  test("PATCH updates subagentProfiles when valid profiles are provided", async () => {
+    const { PATCH } = await routeModulePromise;
+
+    const response = await PATCH(
+      createJsonRequest("PATCH", {
+        subagentProfiles: [
+          {
+            id: "frontend-design",
+            name: "Frontend Design",
+            model: "openai/gpt-5",
+            customPrompt: "Focus on polished UI work.",
+            skills: [{ id: "frontend-design" }],
+            allowedTools: ["read", "write", "edit", "grep", "glob", "bash"],
+          },
+        ],
+      }),
+    );
+    const body = (await response.json()) as {
+      preferences: typeof preferencesState;
+    };
+
+    expect(response.status).toBe(200);
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0]).toEqual({
+      subagentProfiles: [
+        {
+          id: "frontend-design",
+          name: "Frontend Design",
+          model: "openai/gpt-5",
+          customPrompt: "Focus on polished UI work.",
+          skills: [{ id: "frontend-design" }],
+          allowedTools: ["read", "write", "edit", "grep", "glob", "bash"],
+        },
+      ],
+    });
+    expect(body.preferences.subagentProfiles).toEqual([
+      {
+        id: "frontend-design",
+        name: "Frontend Design",
+        model: "openai/gpt-5",
+        customPrompt: "Focus on polished UI work.",
+        skills: [{ id: "frontend-design" }],
+        allowedTools: ["read", "write", "edit", "grep", "glob", "bash"],
+      },
+    ]);
   });
 
   test("PATCH returns 400 for invalid JSON", async () => {

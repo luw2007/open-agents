@@ -5,7 +5,12 @@
   "type": "module",
   "main": "./index.ts",
   "exports": {
-    ".": "./index.ts"
+    ".": "./index.ts",
+    "./model-selection": "./model-selection.ts",
+    "./subagents": "./subagents/index.ts",
+    "./subagents/explorer": "./subagents/explorer.ts",
+    "./subagents/profiles": "./subagents/profiles.ts",
+    "./subagents/registry": "./subagents/registry.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

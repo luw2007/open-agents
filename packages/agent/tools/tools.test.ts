@@ -18,12 +18,21 @@ mock.module("ai", () => {
   }
 
   const gateway = (modelId: string) => ({ modelId });
+  const createGateway = () => gateway;
+  const defaultSettingsMiddleware = () => ({
+    middleware: "default-settings",
+  });
+  const wrapLanguageModel = ({ model }: { model: { modelId?: string } }) =>
+    model;
 
   return {
     tool: <T extends Record<string, unknown>>(definition: T) => definition,
+    createGateway,
+    defaultSettingsMiddleware,
     gateway,
     stepCountIs: (count: number) => ({ count }),
     ToolLoopAgent: MockToolLoopAgent,
+    wrapLanguageModel,
     getToolName: (part: { toolName?: string; type?: string }) => {
       if (part.toolName) {
         return part.toolName;
@@ -557,11 +566,11 @@ describe("tools execute behavior", () => {
     });
   });
 
-  test("taskTool exposes both subagent types without approval gates", async () => {
-    const explorerNeedsApproval = await getNeedsApprovalResult(
+  test("taskTool remains approval-free for configured subagent profiles", async () => {
+    const exploreNeedsApproval = await getNeedsApprovalResult(
       taskTool.needsApproval,
       {
-        subagentType: "explorer",
+        subagentType: "explore",
         task: "Find usages",
         instructions: "Search for helper usage",
       },
@@ -569,14 +578,14 @@ describe("tools execute behavior", () => {
         sandbox: { workingDirectory: "/repo" },
         model: "test-model",
         approval: {},
+        subagentProfiles: [],
       },
     );
-    expect(explorerNeedsApproval).toBe(false);
 
-    const executorNeedsApproval = await getNeedsApprovalResult(
+    const customNeedsApproval = await getNeedsApprovalResult(
       taskTool.needsApproval,
       {
-        subagentType: "executor",
+        subagentType: "frontend-design",
         task: "Apply changes",
         instructions: "Update files",
       },
@@ -584,31 +593,49 @@ describe("tools execute behavior", () => {
         sandbox: { workingDirectory: "/repo" },
         model: "test-model",
         approval: {},
+        subagentProfiles: [],
       },
     );
-    expect(executorNeedsApproval).toBe(false);
+
+    expect(exploreNeedsApproval).toBe(false);
+    expect(customNeedsApproval).toBe(false);
   });
 
-  test("taskTool description lists subagents from the shared registry", () => {
+  test("taskTool description references configured subagent profiles", () => {
     expect(taskTool.description).toContain(
-      "`explorer` - Use for read-only codebase exploration, tracing behavior, and answering questions without changing files",
-    );
-    expect(taskTool.description).toContain(
-      "`executor` - Use for well-scoped implementation work, including edits, scaffolding, refactors, and other file changes",
+      "Built-in and custom subagent profiles are listed in the system prompt",
     );
     expect(taskTool.description).toContain("up to 100 tool steps");
   });
 
-  test("buildSystemPrompt lists subagents from the shared registry", () => {
-    const prompt = buildSystemPrompt({});
+  test("buildSystemPrompt lists runtime subagent profiles", () => {
+    const prompt = buildSystemPrompt({
+      subagentProfiles: [
+        {
+          id: "explore",
+          name: "Explore",
+          description: "Read-only codebase exploration",
+          model: "anthropic/claude-opus-4.6",
+          customPrompt: "",
+          skills: [],
+          allowedTools: ["read", "grep", "glob", "bash"],
+          builtIn: true,
+        },
+        {
+          id: "frontend-design",
+          name: "Frontend Design",
+          model: "openai/gpt-5",
+          customPrompt: "Focus on polished UI work.",
+          skills: [{ id: "frontend-design" }],
+          allowedTools: ["read", "write", "edit", "grep", "glob", "bash"],
+          builtIn: false,
+        },
+      ],
+    });
 
-    expect(prompt).toContain("Available subagents:");
-    expect(prompt).toContain(
-      "`explorer` - Use for read-only codebase exploration, tracing behavior, and answering questions without changing files",
-    );
-    expect(prompt).toContain(
-      "`executor` - Use for well-scoped implementation work, including edits, scaffolding, refactors, and other file changes",
-    );
+    expect(prompt).toContain("## Available Subagents");
+    expect(prompt).toContain("`explore` - Read-only codebase exploration");
+    expect(prompt).toContain("`frontend-design` - Focus on polished UI work.");
   });
 
   test("todoWriteTool returns updated todo list metadata", async () => {

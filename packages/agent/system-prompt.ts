@@ -1,5 +1,8 @@
-import { buildSubagentSummaryLines } from "./subagents/registry";
 import type { SkillMetadata } from "./skills/types";
+import {
+  buildRuntimeSubagentSummaryLines,
+  type RuntimeSubagentProfile,
+} from "./subagents";
 
 // ---------------------------------------------------------------------------
 // Model family detection
@@ -104,8 +107,7 @@ Serialize when there are dependencies:
 
 ## Delegation
 - \`task\` - Spawn a subagent for complex, isolated work
-- Available subagents:
-${buildSubagentSummaryLines()}
+- Current available subagents are injected at runtime below
 - Use when: Large mechanical work that can be clearly specified (migrations, scaffolding)
 - Avoid for: Ambiguous requirements, architectural decisions, small localized fixes
 
@@ -335,6 +337,7 @@ export interface BuildSystemPromptOptions {
   environmentDetails?: string;
   skills?: SkillMetadata[];
   modelId?: string;
+  subagentProfiles?: RuntimeSubagentProfile[];
 }
 
 /**
@@ -386,6 +389,20 @@ npx skills --help                      # all options
 \`\`\``;
 }
 
+function buildSubagentProfilesPrompt(
+  subagentProfiles: RuntimeSubagentProfile[],
+): string {
+  if (subagentProfiles.length === 0) {
+    return "";
+  }
+
+  return `
+## Available Subagents
+${buildRuntimeSubagentSummaryLines(subagentProfiles)}
+
+Use the exact subagent id when calling the \`task\` tool.`;
+}
+
 /**
  * Build the complete system prompt, with model-family-specific behavioral tuning.
  *
@@ -424,6 +441,15 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
     parts.push(
       `\n# Project-Specific Instructions\n\n${options.customInstructions}`,
     );
+  }
+
+  if (options.subagentProfiles && options.subagentProfiles.length > 0) {
+    const subagentProfilesPrompt = buildSubagentProfilesPrompt(
+      options.subagentProfiles,
+    );
+    if (subagentProfilesPrompt) {
+      parts.push(subagentProfilesPrompt);
+    }
   }
 
   // Add skills section if skills are available

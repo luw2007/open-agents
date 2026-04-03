@@ -2,6 +2,7 @@
 
 import useSWR from "swr";
 import { fetcher } from "@/lib/swr";
+import type { CustomSubagentProfile } from "@open-harness/agent/subagents/profiles";
 import type { SandboxType } from "@/components/sandbox-selector-compact";
 import type { ModelVariant } from "@/lib/model-variants";
 
@@ -14,6 +15,7 @@ export interface UserPreferences {
   defaultDiffMode: DiffMode;
   autoCommitPush: boolean;
   autoCreatePr: boolean;
+  subagentProfiles: CustomSubagentProfile[];
   modelVariants: ModelVariant[];
 }
 

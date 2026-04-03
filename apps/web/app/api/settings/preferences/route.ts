@@ -1,10 +1,15 @@
-import { getServerSession } from "@/lib/session/get-server-session";
+import { BUILT_IN_SUBAGENT_METADATA } from "@open-harness/agent/subagents/registry";
+import {
+  customSubagentProfilesSchema,
+  type CustomSubagentProfile,
+} from "@open-harness/agent/subagents/profiles";
+import type { SandboxType } from "@/components/sandbox-selector-compact";
 import {
   getUserPreferences,
   type DiffMode,
   updateUserPreferences,
 } from "@/lib/db/user-preferences";
-import type { SandboxType } from "@/components/sandbox-selector-compact";
+import { getServerSession } from "@/lib/session/get-server-session";
 
 interface UpdatePreferencesRequest {
   defaultModelId?: string;
@@ -13,6 +18,7 @@ interface UpdatePreferencesRequest {
   defaultDiffMode?: DiffMode;
   autoCommitPush?: boolean;
   autoCreatePr?: boolean;
+  subagentProfiles?: CustomSubagentProfile[];
 }
 
 export async function GET() {
@@ -76,6 +82,43 @@ export async function PATCH(req: Request) {
       { error: "Invalid autoCreatePr value" },
       { status: 400 },
     );
+  }
+
+  if (body.subagentProfiles !== undefined) {
+    const parsedSubagentProfiles = customSubagentProfilesSchema.safeParse(
+      body.subagentProfiles,
+    );
+    if (!parsedSubagentProfiles.success) {
+      return Response.json(
+        { error: "Invalid subagentProfiles value" },
+        { status: 400 },
+      );
+    }
+
+    const reservedBuiltInIds = new Set(
+      BUILT_IN_SUBAGENT_METADATA.map((profile) => profile.id.toLowerCase()),
+    );
+    const reservedBuiltInNames = new Set(
+      BUILT_IN_SUBAGENT_METADATA.map((profile) => profile.name.toLowerCase()),
+    );
+    const conflictsWithBuiltIn = parsedSubagentProfiles.data.some((profile) => {
+      return (
+        reservedBuiltInIds.has(profile.id.toLowerCase()) ||
+        reservedBuiltInNames.has(profile.name.toLowerCase())
+      );
+    });
+
+    if (conflictsWithBuiltIn) {
+      return Response.json(
+        {
+          error:
+            "Custom subagent names cannot conflict with built-in subagents",
+        },
+        { status: 400 },
+      );
+    }
+
+    body.subagentProfiles = parsedSubagentProfiles.data;
   }
 
   try {

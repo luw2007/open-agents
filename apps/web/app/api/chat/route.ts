@@ -22,6 +22,7 @@ import {
 import { resolveChatModelSelection } from "./_lib/model-selection";
 import { parseChatRequestBody, requireChatIdentifiers } from "./_lib/request";
 import { createChatRuntime } from "./_lib/runtime";
+import { buildRuntimeSubagentProfiles } from "./_lib/subagent-profiles";
 import { runAgentWorkflow } from "@/app/workflows/chat";
 import { persistAssistantMessagesWithToolResults } from "./_lib/persist-tool-results";
 
@@ -143,6 +144,12 @@ export async function POST(req: Request) {
       })
     : undefined;
 
+  const subagentProfiles = buildRuntimeSubagentProfiles({
+    preferences,
+    mainModelSelection,
+    modelVariants,
+  });
+
   // Determine if auto-commit and auto-PR should run after a natural finish.
   const shouldAutoCommitPush =
     sessionRecord.autoCommitPushOverride ??
@@ -173,6 +180,7 @@ export async function POST(req: Request) {
           ? { subagentModel: subagentModelSelection }
           : {}),
         ...(skills.length > 0 && { skills }),
+        subagentProfiles,
         customInstructions: assistantFileLinkPrompt,
       },
       ...(shouldAutoCommitPush &&

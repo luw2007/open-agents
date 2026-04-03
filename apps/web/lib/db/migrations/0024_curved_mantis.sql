@@ -1,0 +1,1 @@
+ALTER TABLE "user_preferences" ADD COLUMN "subagent_profiles" jsonb DEFAULT '[]'::jsonb NOT NULL;

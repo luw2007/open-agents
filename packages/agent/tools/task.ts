@@ -5,23 +5,27 @@ import {
   type UIToolInvocation,
 } from "ai";
 import { z } from "zod";
+import { gateway } from "../models";
+import { normalizeAgentModelSelection } from "../model-selection";
+import { genericSubagent } from "../subagents";
 import {
-  buildSubagentSummaryLines,
-  SUBAGENT_REGISTRY,
-  SUBAGENT_TYPES,
+  buildRuntimeSubagentSummaryLines,
+  findSubagentProfile,
 } from "../subagents/registry";
 import { SUBAGENT_STEP_LIMIT } from "../subagents/constants";
 import { sumLanguageModelUsage } from "../usage";
-import { getSandboxContext, getSubagentModel } from "./utils";
+import { getSandboxContext, getSkills, getSubagentProfiles } from "./utils";
 
-const subagentTypeSchema = z.enum(SUBAGENT_TYPES);
-
-const subagentSummaryLines = buildSubagentSummaryLines();
+const DEFAULT_SUBAGENT_MODEL_ID = "anthropic/claude-opus-4.6" as const;
 
 const taskInputSchema = z.object({
-  subagentType: subagentTypeSchema.describe(
-    `Subagent to launch. Available options:\n${subagentSummaryLines}`,
-  ),
+  subagentType: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Configured subagent profile id or name. Available profiles are listed in the system prompt.",
+    ),
   task: z
     .string()
     .describe("Short description of the task (displayed to user)"),
@@ -54,15 +58,15 @@ export type TaskToolOutput = z.infer<typeof taskOutputSchema>;
 
 export const taskTool = tool({
   needsApproval: false,
-  description: `Launch a specialized subagent to handle complex tasks autonomously.
+  description: `Launch a specialized subagent profile to handle complex tasks autonomously.
 
 AVAILABLE SUBAGENTS:
-${subagentSummaryLines}
+- Built-in and custom subagent profiles are listed in the system prompt for the current run.
 
 WHEN TO USE:
 - Clearly-scoped work that can be delegated with explicit instructions
 - Work where focused execution would clutter the main conversation
-- Tasks that match one of the available subagent descriptions above
+- Tasks that match one of the configured subagent profiles
 
 WHEN NOT TO USE (do it yourself):
 - Simple, single-file or single-change edits
@@ -75,7 +79,7 @@ BEHAVIOR:
 - They return ONLY a concise summary - their internal steps are isolated from the parent
 
 HOW TO USE:
-- Choose the appropriate subagentType based on the subagent descriptions above
+- Choose the configured subagent profile id or name from the system prompt
 - Provide a short task string (for display) summarizing the goal
 - Provide detailed instructions including goals, steps, constraints, and verification criteria
 
@@ -90,19 +94,67 @@ IMPORTANT:
     { experimental_context, abortSignal },
   ) {
     const sandboxContext = getSandboxContext(experimental_context, "task");
-    const model = getSubagentModel(experimental_context, "task");
-    const subagentModelId = typeof model === "string" ? model : model.modelId;
+    const subagentProfiles = getSubagentProfiles(experimental_context, "task");
+    const profile = findSubagentProfile(subagentProfiles, subagentType);
 
-    const subagent = SUBAGENT_REGISTRY[subagentType].agent;
+    if (!profile) {
+      const availableProfiles =
+        subagentProfiles.length > 0
+          ? buildRuntimeSubagentSummaryLines(subagentProfiles)
+          : "- none configured";
+      throw new Error(
+        `Unknown subagent profile "${subagentType}". Available profiles:\n${availableProfiles}`,
+      );
+    }
 
-    const result = await subagent.stream({
-      prompt:
-        "Complete this task and provide a summary of what you accomplished.",
+    const availableSkills = getSkills(experimental_context, "task");
+    const resolvedSkills = profile.skills
+      .map((configuredSkill) => {
+        return availableSkills.find(
+          (availableSkill) =>
+            availableSkill.name.toLowerCase() ===
+            configuredSkill.id.toLowerCase(),
+        );
+      })
+      .filter(
+        (skill): skill is (typeof availableSkills)[number] =>
+          skill !== undefined,
+      );
+
+    const missingSkillIds = profile.skills
+      .filter(
+        (configuredSkill) =>
+          !resolvedSkills.some(
+            (resolvedSkill) =>
+              resolvedSkill.name.toLowerCase() ===
+              configuredSkill.id.toLowerCase(),
+          ),
+      )
+      .map((skill) => skill.id);
+
+    if (missingSkillIds.length > 0) {
+      throw new Error(
+        `Subagent profile "${profile.id}" references unavailable skills: ${missingSkillIds.join(", ")}`,
+      );
+    }
+
+    const subagentSelection = normalizeAgentModelSelection(
+      profile.model,
+      DEFAULT_SUBAGENT_MODEL_ID,
+    );
+    const subagentModel = gateway(subagentSelection.id, {
+      providerOptionsOverrides: subagentSelection.providerOptionsOverrides,
+    });
+
+    const result = await genericSubagent.stream({
+      prompt: "Complete this delegated task and provide a short summary.",
       options: {
         task,
         instructions,
         sandbox: sandboxContext.sandbox,
-        model,
+        model: subagentModel,
+        profile,
+        ...(resolvedSkills.length > 0 ? { skills: resolvedSkills } : {}),
       },
       abortSignal,
     });
@@ -112,8 +164,7 @@ IMPORTANT:
     let pending: TaskPendingToolCall | undefined;
     let usage: LanguageModelUsage | undefined;
 
-    // Emit an initial state so UIs can show elapsed time from a stable timestamp.
-    yield { toolCallCount, startedAt, modelId: subagentModelId };
+    yield { toolCallCount, startedAt, modelId: subagentSelection.id };
 
     for await (const part of result.fullStream) {
       if (part.type === "tool-call") {
@@ -124,20 +175,18 @@ IMPORTANT:
           toolCallCount,
           usage,
           startedAt,
-          modelId: subagentModelId,
+          modelId: subagentSelection.id,
         };
       }
 
       if (part.type === "finish-step") {
         usage = sumLanguageModelUsage(usage, part.usage);
-        // Keep the last observed tool call in interim updates so task UIs don't
-        // flicker back to an initializing state between subagent steps.
         yield {
           pending,
           toolCallCount,
           usage,
           startedAt,
-          modelId: subagentModelId,
+          modelId: subagentSelection.id,
         };
       }
     }
@@ -149,7 +198,7 @@ IMPORTANT:
       toolCallCount,
       usage: finalUsage,
       startedAt,
-      modelId: subagentModelId,
+      modelId: subagentSelection.id,
     };
   },
   toModelOutput: ({ output: { final: messages } }) => {
@@ -158,7 +207,7 @@ IMPORTANT:
     }
 
     const lastAssistantMessage = messages.findLast(
-      (p) => p.role === "assistant",
+      (message) => message.role === "assistant",
     );
     const content = lastAssistantMessage?.content;
 
@@ -170,7 +219,7 @@ IMPORTANT:
       return { type: "text", value: content };
     }
 
-    const lastTextPart = content.findLast((p) => p.type === "text");
+    const lastTextPart = content.findLast((part) => part.type === "text");
     if (!lastTextPart) {
       return { type: "text", value: "Task completed." };
     }

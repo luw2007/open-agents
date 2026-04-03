@@ -1,9 +1,11 @@
 export { type GatewayConfig, type GatewayOptions, gateway } from "./models";
 export type {
   AgentModelSelection,
+  OpenHarnessAgentModelInput,
+} from "./model-selection";
+export type {
   AgentSandboxContext,
   OpenHarnessAgentCallOptions,
-  OpenHarnessAgentModelInput,
 } from "./open-harness-agent";
 export {
   defaultModel,
@@ -19,11 +21,31 @@ export type {
   SkillOptions,
 } from "./skills/types";
 export { frontmatterToOptions, skillFrontmatterSchema } from "./skills/types";
-// Subagent type exports
+// Subagent exports
 export type {
+  CustomSubagentProfile,
+  RuntimeSubagentProfile,
+  SubagentAllowedToolName,
   SubagentMessageMetadata,
+  SubagentProfileSummary,
+  SubagentSkillRef,
   SubagentUIMessage,
-} from "./subagents/types";
+} from "./subagents";
+export {
+  BUILT_IN_EXPLORE_SUBAGENT_ALLOWED_TOOLS,
+  BUILT_IN_EXPLORE_SUBAGENT_DESCRIPTION,
+  BUILT_IN_EXPLORE_SUBAGENT_ID,
+  BUILT_IN_EXPLORE_SUBAGENT_NAME,
+  BUILT_IN_SUBAGENT_METADATA,
+  createBuiltInExploreSubagentProfile,
+  createDefaultSubagentProfiles,
+  customSubagentProfileSchema,
+  getSubagentProfileDescription,
+  customSubagentProfilesSchema,
+  normalizeCustomSubagentProfiles,
+  subagentAllowedToolNameSchema,
+  subagentSkillRefSchema,
+} from "./subagents";
 export type { BuildSystemPromptOptions } from "./system-prompt";
 export { buildSystemPrompt } from "./system-prompt";
 export {

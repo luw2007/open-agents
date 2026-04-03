@@ -17,6 +17,7 @@ describe("toUserPreferencesData", () => {
       defaultDiffMode: "unified",
       autoCommitPush: false,
       autoCreatePr: false,
+      subagentProfiles: [],
       modelVariants: [],
     });
   });
@@ -31,6 +32,7 @@ describe("toUserPreferencesData", () => {
       defaultDiffMode: "invalid" as never,
       autoCommitPush: false,
       autoCreatePr: false,
+      subagentProfiles: [],
       modelVariants: [],
     });
 
@@ -48,6 +50,7 @@ describe("toUserPreferencesData", () => {
       defaultDiffMode: "unified",
       autoCommitPush: false,
       autoCreatePr: false,
+      subagentProfiles: [],
       modelVariants: [],
     });
 
@@ -55,7 +58,7 @@ describe("toUserPreferencesData", () => {
     expect(result.defaultDiffMode).toBe("unified");
   });
 
-  test("drops invalid modelVariants payloads", async () => {
+  test("drops invalid subagentProfiles payloads", async () => {
     const { toUserPreferencesData } = await userPreferencesModulePromise;
 
     const result = toUserPreferencesData({
@@ -65,13 +68,14 @@ describe("toUserPreferencesData", () => {
       defaultDiffMode: "split",
       autoCommitPush: false,
       autoCreatePr: false,
-      modelVariants: [{ id: "bad-id" }] as never,
+      subagentProfiles: [{ id: "Bad Id", name: "Bad", model: "" }] as never,
+      modelVariants: [],
     });
 
-    expect(result.modelVariants).toEqual([]);
+    expect(result.subagentProfiles).toEqual([]);
   });
 
-  test("keeps valid modelVariants payloads", async () => {
+  test("keeps valid subagentProfiles payloads", async () => {
     const { toUserPreferencesData } = await userPreferencesModulePromise;
 
     const result = toUserPreferencesData({
@@ -81,6 +85,16 @@ describe("toUserPreferencesData", () => {
       defaultDiffMode: "split",
       autoCommitPush: true,
       autoCreatePr: true,
+      subagentProfiles: [
+        {
+          id: "frontend-design",
+          name: "Frontend Design",
+          model: "openai/gpt-5",
+          customPrompt: "Focus on polished UI work.",
+          skills: [{ id: "frontend-design" }],
+          allowedTools: ["read", "write", "edit", "grep", "glob", "bash"],
+        },
+      ],
       modelVariants: [
         {
           id: "variant:test",
@@ -98,6 +112,16 @@ describe("toUserPreferencesData", () => {
       defaultDiffMode: "split",
       autoCommitPush: true,
       autoCreatePr: true,
+      subagentProfiles: [
+        {
+          id: "frontend-design",
+          name: "Frontend Design",
+          model: "openai/gpt-5",
+          customPrompt: "Focus on polished UI work.",
+          skills: [{ id: "frontend-design" }],
+          allowedTools: ["read", "write", "edit", "grep", "glob", "bash"],
+        },
+      ],
       modelVariants: [
         {
           id: "variant:test",
@@ -107,5 +131,22 @@ describe("toUserPreferencesData", () => {
         },
       ],
     });
+  });
+
+  test("drops invalid modelVariants payloads", async () => {
+    const { toUserPreferencesData } = await userPreferencesModulePromise;
+
+    const result = toUserPreferencesData({
+      defaultModelId: "openai/gpt-5",
+      defaultSubagentModelId: null,
+      defaultSandboxType: "vercel",
+      defaultDiffMode: "split",
+      autoCommitPush: false,
+      autoCreatePr: false,
+      subagentProfiles: [],
+      modelVariants: [{ id: "bad-id" }] as never,
+    });
+
+    expect(result.modelVariants).toEqual([]);
   });
 });
