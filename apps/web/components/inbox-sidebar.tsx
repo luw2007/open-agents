@@ -3,11 +3,13 @@
 import {
   Archive,
   ChevronDown,
-  EllipsisVertical,
+  ExternalLink,
   FolderGit2,
+  GitBranch,
   GitMerge,
+  GitPullRequest,
   Loader2,
-  Pencil,
+  Monitor,
   Plus,
   Settings,
 } from "lucide-react";
@@ -15,15 +17,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CSSProperties } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { InboxSidebarRenameDialog } from "@/components/inbox-sidebar-rename-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useLeaderboardRank } from "@/hooks/use-leaderboard-rank";
 import { useSession } from "@/hooks/use-session";
@@ -39,7 +39,7 @@ type InboxSidebarProps = {
   pendingSessionId: string | null;
   onSessionClick: (session: SessionWithUnread) => void;
   onSessionPrefetch: (session: SessionWithUnread) => void;
-  onRenameSession: (sessionId: string, title: string) => Promise<void>;
+  onRenameSession?: (sessionId: string, title: string) => Promise<void>;
   onArchiveSession: (sessionId: string) => Promise<void>;
   onOpenNewSession: () => void;
   initialUser?: AuthSession["user"];
@@ -59,7 +59,7 @@ const ARCHIVED_SESSIONS_PAGE_SIZE = 50;
 
 const sessionRowPerformanceStyle: CSSProperties = {
   contentVisibility: "auto",
-  containIntrinsicSize: "3.25rem",
+  containIntrinsicSize: "2.25rem",
 };
 
 function formatRelativeTime(date: Date): string {
@@ -116,25 +116,128 @@ function DiffStats({
   );
 }
 
-function PrBadge({
-  prNumber,
-  status,
-}: {
-  prNumber: number | null;
-  status: "open" | "merged" | "closed" | null;
-}) {
-  if (!prNumber) return null;
-
-  if (status === "merged") {
+function getSessionStatusIcon(session: SessionWithUnread) {
+  // Actively streaming / waiting for LLM
+  if (session.hasStreaming) {
     return (
-      <span className="flex items-center gap-0.5 text-[10px] text-purple-700 dark:text-purple-400">
-        <GitMerge className="h-2.5 w-2.5" />
-        <span>#{prNumber}</span>
-      </span>
+      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
     );
   }
 
-  return <span className="text-[10px] text-muted-foreground">#{prNumber}</span>;
+  // PR merged → purple merge icon
+  if (session.prNumber && session.prStatus === "merged") {
+    return <GitMerge className="h-3.5 w-3.5 shrink-0 text-purple-500" />;
+  }
+
+  // PR open → yellow-orange PR icon (awaiting review)
+  if (session.prNumber && session.prStatus === "open") {
+    return <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-amber-500" />;
+  }
+
+  // PR closed (not merged)
+  if (session.prNumber && session.prStatus === "closed") {
+    return <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-red-500" />;
+  }
+
+  // Has a branch → gray branch icon (sandbox ready, no active prompt)
+  if (session.branch) {
+    return (
+      <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+    );
+  }
+
+  // Creating / instantiating sandbox
+  if (session.status === "running") {
+    return (
+      <Monitor className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+    );
+  }
+
+  // Default: sandbox icon
+  return <Monitor className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />;
+}
+
+function getSessionStatusLabel(session: SessionWithUnread): string {
+  if (session.hasStreaming) return "Working";
+  if (session.prNumber && session.prStatus === "merged") return "Merged";
+  if (session.prNumber && session.prStatus === "open") return "In review";
+  if (session.prNumber && session.prStatus === "closed") return "Closed";
+  if (session.branch) return "Ready";
+  if (session.status === "running") return "Setting up";
+  if (session.status === "completed") return "Completed";
+  if (session.status === "failed") return "Failed";
+  if (session.status === "archived") return "Archived";
+  return "Idle";
+}
+
+function getSessionPrUrl(session: SessionWithUnread): string | null {
+  if (!session.prNumber || !session.repoOwner || !session.repoName) return null;
+  return `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`;
+}
+
+function SessionPopoverContent({ session }: { session: SessionWithUnread }) {
+  const lastActivityLabel = formatRelativeTime(
+    new Date(session.lastActivityAt ?? session.createdAt),
+  );
+  const prUrl = getSessionPrUrl(session);
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-sm font-medium text-foreground leading-snug">
+          {session.title}
+        </p>
+      </div>
+
+      <div className="flex items-center gap-2">
+        {getSessionStatusIcon(session)}
+        <span className="text-xs text-muted-foreground">
+          {getSessionStatusLabel(session)}
+        </span>
+        <span className="text-[10px] text-muted-foreground/60">·</span>
+        <span className="text-[10px] text-muted-foreground/60">
+          {lastActivityLabel} ago
+        </span>
+      </div>
+
+      {session.repoOwner && session.repoName ? (
+        <p className="text-xs text-muted-foreground">
+          {session.repoOwner}/{session.repoName}
+        </p>
+      ) : null}
+
+      {session.linesAdded !== null || session.linesRemoved !== null ? (
+        <div className="flex items-center gap-2">
+          <DiffStats
+            added={session.linesAdded}
+            removed={session.linesRemoved}
+          />
+        </div>
+      ) : null}
+
+      {session.branch ? (
+        <div className="flex items-center gap-1.5">
+          <GitBranch className="h-3 w-3 text-muted-foreground/60" />
+          <span className="font-mono text-[11px] text-muted-foreground truncate">
+            {session.branch}
+          </span>
+        </div>
+      ) : null}
+
+      {prUrl ? (
+        <a
+          href={prUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <GitPullRequest className="h-3 w-3" />
+          <span>#{session.prNumber}</span>
+          <ExternalLink className="h-2.5 w-2.5" />
+        </a>
+      ) : null}
+    </div>
+  );
 }
 
 type SessionRepoGroup = {
@@ -199,7 +302,6 @@ type SessionRowProps = {
   isPending: boolean;
   onSessionClick: (session: SessionWithUnread) => void;
   onSessionPrefetch: (session: SessionWithUnread) => void;
-  onOpenRenameDialog: (session: SessionWithUnread) => void;
   onArchiveSession: (session: SessionWithUnread) => void;
 };
 
@@ -209,121 +311,118 @@ const SessionRow = memo(function SessionRow({
   isPending,
   onSessionClick,
   onSessionPrefetch,
-  onOpenRenameDialog,
   onArchiveSession,
 }: SessionRowProps) {
-  const isWorking = session.hasStreaming;
-  const isUnread = session.hasUnread && !isActive;
-  const lastActivityLabel = useMemo(
-    () =>
-      formatRelativeTime(new Date(session.lastActivityAt ?? session.createdAt)),
-    [session.createdAt, session.lastActivityAt],
-  );
-  const metadataLabel =
-    session.branch ??
-    (isWorking ? "Working..." : !session.repoName ? "No repository" : null);
-  const metadataLabelClassName = session.branch
-    ? "truncate font-mono text-[11px]"
-    : "truncate";
-  const showMetadata =
-    Boolean(metadataLabel) ||
-    session.prNumber !== null ||
-    session.linesAdded !== null ||
-    session.linesRemoved !== null;
+  const [isHovered, setIsHovered] = useState(false);
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const leaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const hasDiff = session.linesAdded !== null || session.linesRemoved !== null;
+  const showArchiveButton = isHovered && session.status !== "archived";
+
+  const handleMouseEnter = useCallback(() => {
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current);
+      leaveTimeoutRef.current = null;
+    }
+    setIsHovered(true);
+    hoverTimeoutRef.current = setTimeout(() => {
+      setPopoverOpen(true);
+    }, 500);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    leaveTimeoutRef.current = setTimeout(() => {
+      setIsHovered(false);
+      setPopoverOpen(false);
+    }, 200);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+      if (leaveTimeoutRef.current) clearTimeout(leaveTimeoutRef.current);
+    };
+  }, []);
 
   return (
-    <div
-      className={`group relative flex w-full items-start gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-[background-color,border-color,box-shadow,opacity] ${
-        isActive
-          ? "border-border/70 bg-sidebar-active shadow-sm"
-          : "border-transparent hover:border-border/40 hover:bg-muted/50"
-      } ${isPending ? "opacity-80" : "opacity-100"}`}
-      style={sessionRowPerformanceStyle}
-    >
-      <div className="flex h-5 w-3 shrink-0 items-center justify-center">
-        {isWorking ? (
-          <span className="h-2 w-2 rounded-full bg-foreground/70 animate-pulse" />
-        ) : isUnread ? (
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-        ) : null}
-      </div>
-
-      <div className="min-w-0 flex-1">
+    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+      <PopoverTrigger asChild>
         <button
           type="button"
+          className={`group relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-[background-color,border-color,opacity] cursor-pointer ${
+            isActive ? "bg-sidebar-active" : "hover:bg-muted/50"
+          } ${isPending ? "opacity-80" : "opacity-100"}`}
+          style={sessionRowPerformanceStyle}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
           onClick={() => onSessionClick(session)}
-          onMouseEnter={() => onSessionPrefetch(session)}
           onFocus={() => onSessionPrefetch(session)}
-          className="block w-full text-left"
           aria-busy={isPending}
         >
-          <div className="flex min-w-0 items-center gap-2 pr-7">
+          {/* Status icon */}
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+            {getSessionStatusIcon(session)}
+          </span>
+
+          {/* Session name */}
+          <span className="min-w-0 flex-1 text-left">
             <p
-              className={`min-w-0 flex-1 truncate text-sm ${
-                isUnread || isWorking
+              className={`truncate text-[13px] leading-5 ${
+                session.hasUnread && !isActive
                   ? "font-semibold text-foreground"
-                  : "font-medium text-foreground"
+                  : "font-medium text-foreground/90"
               }`}
             >
               {session.title}
             </p>
-            <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
-              {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-              <span>{lastActivityLabel}</span>
-            </span>
-          </div>
+          </span>
 
-          {showMetadata ? (
-            <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-              {metadataLabel ? (
-                <span className={metadataLabelClassName}>{metadataLabel}</span>
-              ) : null}
-              <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                <PrBadge
-                  prNumber={session.prNumber}
-                  status={session.prStatus}
-                />
-                <DiffStats
-                  added={session.linesAdded}
-                  removed={session.linesRemoved}
-                />
-              </span>
-            </div>
-          ) : null}
+          {/* Right side: diff stats or archive button on hover */}
+          <span className="flex shrink-0 items-center">
+            {showArchiveButton ? (
+              <button
+                type="button"
+                className="rounded p-0.5 text-muted-foreground hover:bg-background/60 hover:text-foreground transition-colors"
+                aria-label="Archive session"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onArchiveSession(session);
+                }}
+              >
+                <Archive className="h-3.5 w-3.5" />
+              </button>
+            ) : hasDiff ? (
+              <DiffStats
+                added={session.linesAdded}
+                removed={session.linesRemoved}
+              />
+            ) : null}
+          </span>
         </button>
-      </div>
-
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            onClick={(e) => e.stopPropagation()}
-            className="absolute right-2 top-2.5 rounded p-1 text-muted-foreground hover:bg-background/60 hover:text-foreground"
-            aria-label={`Open menu for ${session.title}`}
-          >
-            <EllipsisVertical className="h-3 w-3" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem
-            onClick={() => onOpenRenameDialog(session)}
-            className="gap-2"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-            <span>Rename session</span>
-          </DropdownMenuItem>
-          {session.status !== "archived" ? (
-            <DropdownMenuItem
-              onClick={() => onArchiveSession(session)}
-              className="gap-2"
-            >
-              <Archive className="h-3.5 w-3.5" />
-              <span>Archive session</span>
-            </DropdownMenuItem>
-          ) : null}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+      </PopoverTrigger>
+      <PopoverContent
+        side="right"
+        align="start"
+        sideOffset={8}
+        className="w-72 p-3"
+        onMouseEnter={() => {
+          if (leaveTimeoutRef.current) {
+            clearTimeout(leaveTimeoutRef.current);
+            leaveTimeoutRef.current = null;
+          }
+        }}
+        onMouseLeave={handleMouseLeave}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        <SessionPopoverContent session={session} />
+      </PopoverContent>
+    </Popover>
   );
 }, areSessionRowsEqual);
 
@@ -359,7 +458,7 @@ export function InboxSidebar({
   pendingSessionId,
   onSessionClick,
   onSessionPrefetch,
-  onRenameSession,
+  onRenameSession: _onRenameSession,
   onArchiveSession,
   onOpenNewSession,
   initialUser,
@@ -380,8 +479,6 @@ export function InboxSidebar({
   const [hasMoreArchivedSessions, setHasMoreArchivedSessions] = useState(false);
   const archivedRequestInFlightRef = useRef(false);
   const lastLoadedArchivedCountRef = useRef(0);
-  const [renameDialogSession, setRenameDialogSession] =
-    useState<SessionWithUnread | null>(null);
 
   const fetchArchivedSessionsPage = useCallback(
     async ({ offset, replace }: { offset: number; replace: boolean }) => {
@@ -574,25 +671,6 @@ export function InboxSidebar({
     void fetchArchivedSessionsPage({ offset: 0, replace: true });
   }, [fetchArchivedSessionsPage]);
 
-  const closeRenameDialog = useCallback(() => {
-    setRenameDialogSession(null);
-  }, []);
-
-  const handleOpenRenameDialog = useCallback((session: SessionWithUnread) => {
-    setRenameDialogSession(session);
-  }, []);
-
-  const handleRenameArchivedSession = useCallback(
-    (sessionId: string, title: string) => {
-      setArchivedSessions((current) =>
-        current.map((session) =>
-          session.id === sessionId ? { ...session, title } : session,
-        ),
-      );
-    },
-    [],
-  );
-
   return (
     <>
       <div className="border-b border-border p-3">
@@ -750,7 +828,6 @@ export function InboxSidebar({
                               isPending={session.id === pendingSessionId}
                               onSessionClick={handleSessionClick}
                               onSessionPrefetch={handleSessionPrefetch}
-                              onOpenRenameDialog={handleOpenRenameDialog}
                               onArchiveSession={handleArchiveSession}
                             />
                           ))}
@@ -839,13 +916,6 @@ export function InboxSidebar({
           </div>
         </div>
       ) : null}
-
-      <InboxSidebarRenameDialog
-        session={renameDialogSession}
-        onClose={closeRenameDialog}
-        onRenameSession={onRenameSession}
-        onRenamed={handleRenameArchivedSession}
-      />
     </>
   );
 }
