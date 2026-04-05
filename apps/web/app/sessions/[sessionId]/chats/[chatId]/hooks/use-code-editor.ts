@@ -5,7 +5,6 @@ import type {
   CodeEditorLaunchResponse,
   CodeEditorStatusResponse,
 } from "@/app/api/sessions/[sessionId]/code-editor/route";
-import { DEFAULT_WORKING_DIRECTORY } from "@/lib/sandbox/config";
 
 export type CodeEditorState =
   | { status: "idle" }
@@ -112,34 +111,9 @@ export function useCodeEditor({
     };
   }, [canRun, sessionId]);
 
-  const openEditorUrl = useCallback((url: string) => {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }, []);
-
-  /**
-   * Build a code-server URL that opens a specific file.
-   * Uses the `payload` query parameter with an `openFile` command and
-   * `vscode-remote://` URI scheme that code-server understands.
-   */
-  const buildFileUrl = useCallback(
-    (baseUrl: string, filePath: string): string => {
-      try {
-        const url = new URL(baseUrl);
-        const absolutePath = filePath.startsWith("/")
-          ? filePath
-          : `${DEFAULT_WORKING_DIRECTORY}/${filePath}`;
-        const payload = JSON.stringify([
-          ["openFile", `vscode-remote://${absolutePath}`],
-        ]);
-        url.searchParams.set("folder", DEFAULT_WORKING_DIRECTORY);
-        url.searchParams.set("payload", payload);
-        return url.toString();
-      } catch {
-        return baseUrl;
-      }
-    },
-    [],
-  );
+  const openEditorPage = useCallback(() => {
+    window.open(`/codespace/${sessionId}`, "_blank", "noopener,noreferrer");
+  }, [sessionId]);
 
   /**
    * Ensure code-server is running and return the launch response.
@@ -196,18 +170,20 @@ export function useCodeEditor({
   const handleOpen = useCallback(async () => {
     const info = await ensureRunning();
     if (info) {
-      openEditorUrl(info.url);
+      openEditorPage();
     }
-  }, [ensureRunning, openEditorUrl]);
+  }, [ensureRunning, openEditorPage]);
 
   const handleOpenFile = useCallback(
-    async (filePath: string) => {
+    async (_filePath: string) => {
       const info = await ensureRunning();
       if (info) {
-        openEditorUrl(buildFileUrl(info.url, filePath));
+        // Open the codespace page; file-specific deep linking can be added
+        // to the codespace route later via query parameters.
+        openEditorPage();
       }
     },
-    [buildFileUrl, ensureRunning, openEditorUrl],
+    [ensureRunning, openEditorPage],
   );
 
   const handleStop = useCallback(async () => {
@@ -251,7 +227,7 @@ export function useCodeEditor({
 
   const menuDetail =
     state.status === "ready" || state.status === "stopping"
-      ? state.info.url
+      ? "Running"
       : state.status === "error"
         ? state.message
         : null;
