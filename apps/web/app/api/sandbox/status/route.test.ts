@@ -86,8 +86,12 @@ describe("/api/sandbox/status lifecycle safety net", () => {
     const response = await GET(
       new Request("http://localhost/api/sandbox/status?sessionId=session-1"),
     );
+    const payload = (await response.json()) as {
+      hasSnapshot: boolean;
+    };
 
     expect(response.ok).toBe(true);
+    expect(payload.hasSnapshot).toBe(false);
     expect(kickCalls.length).toBe(1);
     expect(kickCalls[0]).toEqual({
       sessionId: "session-1",
@@ -108,11 +112,13 @@ describe("/api/sandbox/status lifecycle safety net", () => {
     );
     const payload = (await response.json()) as {
       status: string;
+      hasSnapshot: boolean;
       lifecycle: { state: string | null };
     };
 
     expect(response.ok).toBe(true);
     expect(payload.status).toBe("active");
+    expect(payload.hasSnapshot).toBe(false);
     expect(payload.lifecycle.state).toBe("active");
     expect(updateCalls).toHaveLength(1);
     expect(updateCalls[0]?.sessionId).toBe("session-1");

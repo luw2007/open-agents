@@ -32,8 +32,8 @@ import type { Chat, Session } from "@/lib/db/schema";
 import { type ModelOption, withMissingModelOption } from "@/lib/model-options";
 import {
   clearSandboxState,
-  hasResumableSandboxState as hasResumableSandboxStateValue,
   hasRuntimeSandboxState as hasRuntimeSandboxStateValue,
+  hasSavedSandboxState as hasSavedSandboxStateValue,
 } from "@/lib/sandbox/utils";
 import {
   type RetryChatStreamOptions,
@@ -908,7 +908,7 @@ export function SessionChatProvider({
 
     const nextSession = data.session ?? optimisticSession;
     const nextHasSavedSandbox =
-      hasResumableSandboxStateValue(nextSession.sandboxState) ||
+      hasSavedSandboxStateValue(nextSession.sandboxState) ||
       Boolean(nextSession.snapshotUrl);
 
     setSandboxInfoState(null);
@@ -956,7 +956,7 @@ export function SessionChatProvider({
       lifecycleState: null,
     };
     const nextHasSavedSandbox =
-      hasResumableSandboxStateValue(nextSession.sandboxState) ||
+      hasSavedSandboxStateValue(nextSession.sandboxState) ||
       Boolean(nextSession.snapshotUrl);
 
     setSandboxInfoState(null);

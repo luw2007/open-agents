@@ -11,8 +11,8 @@ import {
 } from "@/lib/sandbox/lifecycle";
 import {
   clearSandboxState,
-  hasResumableSandboxState,
   hasRuntimeSandboxState,
+  hasSavedSandboxState,
   isSandboxUnavailableError,
 } from "@/lib/sandbox/utils";
 
@@ -77,7 +77,7 @@ export async function GET(req: Request): Promise<Response> {
 
   const { sessionRecord } = sessionContext;
   const hasSavedSandbox =
-    hasResumableSandboxState(sessionRecord.sandboxState) ||
+    hasSavedSandboxState(sessionRecord.sandboxState) ||
     Boolean(sessionRecord.snapshotUrl);
 
   if (!hasRuntimeSandboxState(sessionRecord.sandboxState)) {

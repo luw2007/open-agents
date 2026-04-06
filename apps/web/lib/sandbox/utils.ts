@@ -80,6 +80,15 @@ export function hasResumableSandboxState(
 }
 
 /**
+ * Check if a session has a saved sandbox that can be resumed right now.
+ */
+export function hasSavedSandboxState(
+  state: SandboxState | null | undefined,
+): boolean {
+  return !hasRuntimeSandboxState(state) && hasResumableSandboxState(state);
+}
+
+/**
  * Check if an unknown value represents sandbox state with runtime data.
  */
 export function hasRuntimeSandboxState(state: unknown): boolean {
