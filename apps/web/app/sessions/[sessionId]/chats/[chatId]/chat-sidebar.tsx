@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import type { SessionChatListItem } from "@/hooks/use-session-chats";
+import { formatRelativeTime } from "@/lib/format-relative-time";
 
 type ChatSidebarProps = {
   sessionTitle: string;
@@ -27,24 +28,6 @@ type ChatSidebarProps = {
   onRenameChat: (chatId: string, title: string) => Promise<unknown>;
   onDeleteChat: (chatId: string) => Promise<unknown>;
 };
-
-function formatRelativeTime(date: Date): string {
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60_000);
-  const diffHours = Math.floor(diffMs / 3_600_000);
-  const diffDays = Math.floor(diffMs / 86_400_000);
-
-  if (diffMins < 1) return "now";
-  if (diffMins < 60) return `${diffMins}m`;
-  if (diffHours < 24) return `${diffHours}h`;
-  if (diffDays < 7) return `${diffDays}d`;
-
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-}
 
 export function ChatSidebar({
   sessionTitle,
@@ -266,7 +249,7 @@ export function ChatSidebar({
                         : "text-muted-foreground"
                     }`}
                   >
-                    {formatRelativeTime(new Date(c.updatedAt))}
+                    {formatRelativeTime(c.updatedAt, { suffix: false })}
                   </span>
                 </button>
               )}

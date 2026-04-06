@@ -116,6 +116,7 @@ import {
   shouldKeepCollapsedReasoningStreaming,
   shouldShowThinkingIndicator,
 } from "@/lib/chat-streaming-state";
+import { formatRelativeTime } from "@/lib/format-relative-time";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
 import { DEFAULT_CONTEXT_LIMIT } from "@/lib/models";
 import { getPrDeploymentRefreshInterval } from "@/lib/pr-deployment-polling";
@@ -188,24 +189,6 @@ function useHasMounted() {
     () => true,
     () => false,
   );
-}
-
-function formatRelativeTime(date: Date): string {
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60_000);
-  const diffHours = Math.floor(diffMs / 3_600_000);
-  const diffDays = Math.floor(diffMs / 86_400_000);
-
-  if (diffMins < 1) return "now";
-  if (diffMins < 60) return `${diffMins}m`;
-  if (diffHours < 24) return `${diffHours}h`;
-  if (diffDays < 7) return `${diffDays}d`;
-
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
 }
 
 type ReasoningMessagePart = Extract<
@@ -784,7 +767,7 @@ function ChatSwitcherPanel({
             </span>
             <span className="flex shrink-0 items-center gap-1.5">
               <span className="text-[11px] text-muted-foreground">
-                {formatRelativeTime(new Date(chat.updatedAt))}
+                {formatRelativeTime(chat.updatedAt, { suffix: false })}
               </span>
               {chat.isStreaming && (
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />

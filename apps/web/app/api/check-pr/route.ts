@@ -96,17 +96,13 @@ export async function POST(req: Request) {
       });
     }
 
-    // 3. If session already has a PR recorded for the same branch, just return
-    // current state (the PR was created through our flow -- no need to re-check)
-    if (!branchChanged && sessionRecord.prNumber) {
-      return Response.json({
-        branch,
-        prNumber: sessionRecord.prNumber,
-        prStatus: sessionRecord.prStatus,
-      });
-    }
+    // After a branch change the DB was cleared but sessionRecord is stale.
+    // Use null when the branch changed so we never return PR info from
+    // the previous branch.
+    const currentPrNumber = branchChanged ? null : sessionRecord.prNumber;
+    const currentPrStatus = branchChanged ? null : sessionRecord.prStatus;
 
-    // 4. Check GitHub for an existing PR on this branch
+    // 3. Check GitHub for an existing PR on this branch
     let token: string | undefined;
     try {
       const tokenResult = await getRepoToken(
@@ -115,8 +111,12 @@ export async function POST(req: Request) {
       );
       token = tokenResult.token;
     } catch {
-      // No token available -- skip PR check
-      return Response.json({ branch, prNumber: null, prStatus: null });
+      // No token available -- return existing PR info if we have it
+      return Response.json({
+        branch,
+        prNumber: currentPrNumber ?? null,
+        prStatus: currentPrStatus ?? null,
+      });
     }
 
     const prResult = await findPullRequestByBranch({
@@ -127,11 +127,17 @@ export async function POST(req: Request) {
     });
 
     if (prResult.found && prResult.prNumber && prResult.prStatus) {
-      // Persist PR info to session
-      await updateSession(sessionId, {
-        prNumber: prResult.prNumber,
-        prStatus: prResult.prStatus,
-      });
+      // Only update DB if PR info actually changed
+      const prChanged =
+        prResult.prNumber !== currentPrNumber ||
+        prResult.prStatus !== currentPrStatus;
+
+      if (prChanged) {
+        await updateSession(sessionId, {
+          prNumber: prResult.prNumber,
+          prStatus: prResult.prStatus,
+        });
+      }
 
       return Response.json({
         branch,

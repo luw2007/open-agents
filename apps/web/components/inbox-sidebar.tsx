@@ -3,7 +3,6 @@
 import {
   Archive,
   ChevronDown,
-  ExternalLink,
   FolderGit2,
   GitBranch,
   GitMerge,
@@ -40,10 +39,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useLeaderboardRank } from "@/hooks/use-leaderboard-rank";
 import { useSession } from "@/hooks/use-session";
 import type { SessionWithUnread } from "@/hooks/use-sessions";
 import type { Session as AuthSession } from "@/lib/session/types";
+import { formatRelativeTime } from "@/lib/format-relative-time";
 import { getUsageLeaderboardDomain } from "@/lib/usage/leaderboard-domain";
 
 type InboxSidebarProps = {
@@ -82,24 +83,6 @@ const sessionRowPerformanceStyle: CSSProperties = {
   contentVisibility: "auto",
   containIntrinsicSize: "2.25rem",
 };
-
-function formatRelativeTime(date: Date): string {
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60_000);
-  const diffHours = Math.floor(diffMs / 3_600_000);
-  const diffDays = Math.floor(diffMs / 86_400_000);
-
-  if (diffMins < 1) return "now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-}
 
 function formatDomainOrg(domain: string): string {
   const dotIndex = domain.indexOf(".");
@@ -185,19 +168,42 @@ function getSessionStatusIcon(session: SessionWithUnread) {
   return <Monitor className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />;
 }
 
-function getSessionStatusLabel(session: SessionWithUnread): string {
-  if (session.hasStreaming) return "Working";
-  if (session.prNumber && session.prStatus === "merged") return "Merged";
-  if (session.prNumber && session.prStatus === "open") return "Open PR";
-  if (session.prNumber && session.prStatus === "closed") return "Closed";
+function getSessionStatusLabel(session: SessionWithUnread): {
+  text: string;
+  prNumber: number | null;
+} {
+  if (session.hasStreaming) return { text: "Working", prNumber: null };
+  if (session.prNumber && session.prStatus === "merged")
+    return { text: `PR #${session.prNumber}`, prNumber: session.prNumber };
+  if (session.prNumber && session.prStatus === "open")
+    return { text: `PR #${session.prNumber}`, prNumber: session.prNumber };
+  if (session.prNumber && session.prStatus === "closed")
+    return { text: `PR #${session.prNumber}`, prNumber: session.prNumber };
   const hasDiff = session.linesAdded || session.linesRemoved;
-  if (session.branch && hasDiff) return "Needs attention";
-  if (session.branch) return "New session";
-  if (session.status === "running") return "Setting up";
-  if (session.status === "completed") return "Completed";
-  if (session.status === "failed") return "Failed";
-  if (session.status === "archived") return "Archived";
-  return "Idle";
+  if (session.branch && hasDiff)
+    return { text: "Needs attention", prNumber: null };
+  if (session.branch) return { text: "New session", prNumber: null };
+  if (session.status === "running")
+    return { text: "Setting up", prNumber: null };
+  if (session.status === "completed")
+    return { text: "Completed", prNumber: null };
+  if (session.status === "failed") return { text: "Failed", prNumber: null };
+  if (session.status === "archived")
+    return { text: "Archived", prNumber: null };
+  return { text: "Idle", prNumber: null };
+}
+
+function getSessionBranchUrl(session: SessionWithUnread): string | null {
+  // Only link if the branch is known to exist on GitHub (has a PR).
+  // Local-only branches that haven't been pushed would 404.
+  if (
+    !session.branch ||
+    !session.repoOwner ||
+    !session.repoName ||
+    !session.prNumber
+  )
+    return null;
+  return `https://github.com/${session.repoOwner}/${session.repoName}/tree/${session.branch}`;
 }
 
 function getSessionPrUrl(session: SessionWithUnread): string | null {
@@ -207,11 +213,12 @@ function getSessionPrUrl(session: SessionWithUnread): string | null {
 
 function SessionPopoverContent({ session }: { session: SessionWithUnread }) {
   const lastActivityLabel = formatRelativeTime(
-    new Date(session.lastActivityAt ?? session.createdAt),
+    session.lastActivityAt ?? session.createdAt,
   );
+  const branchUrl = getSessionBranchUrl(session);
   const prUrl = getSessionPrUrl(session);
   const hasDiff = session.linesAdded !== null || session.linesRemoved !== null;
-  const hasSecondRow = hasDiff || prUrl;
+  const statusLabel = getSessionStatusLabel(session);
 
   return (
     <div className="space-y-2">
@@ -220,45 +227,54 @@ function SessionPopoverContent({ session }: { session: SessionWithUnread }) {
         {session.title}
       </p>
 
-      {/* Status · branch · time — all inline, never wraps */}
+      {/* Status + branch */}
       <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-xs text-muted-foreground">
         <span className="shrink-0">{getSessionStatusIcon(session)}</span>
-        <span className="shrink-0">{getSessionStatusLabel(session)}</span>
+        {prUrl && statusLabel.prNumber ? (
+          <a
+            href={prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 hover:text-foreground transition-colors"
+          >
+            {statusLabel.text}
+          </a>
+        ) : (
+          <span className="shrink-0">{statusLabel.text}</span>
+        )}
         {session.branch ? (
-          <>
-            <span className="shrink-0 text-muted-foreground/40">·</span>
-            <span className="min-w-0 truncate font-mono text-[11px]">
-              {session.branch}
-            </span>
-          </>
+          <span className="flex min-w-0 items-center gap-1 ml-1">
+            <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+            {branchUrl ? (
+              <a
+                href={branchUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="min-w-0 truncate font-mono text-[11px] hover:text-foreground transition-colors"
+              >
+                {session.branch}
+              </a>
+            ) : (
+              <span className="min-w-0 truncate font-mono text-[11px]">
+                {session.branch}
+              </span>
+            )}
+          </span>
         ) : null}
-        <span className="shrink-0 text-muted-foreground/40">·</span>
-        <span className="shrink-0">{lastActivityLabel}</span>
       </div>
 
-      {/* Diff count · PR link — all inline */}
-      {hasSecondRow ? (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          {hasDiff ? (
-            <DiffStats
-              added={session.linesAdded}
-              removed={session.linesRemoved}
-            />
-          ) : null}
-          {prUrl ? (
-            <a
-              href={prUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 hover:text-foreground transition-colors"
-            >
-              <GitPullRequest className="h-3 w-3" />
-              <span>#{session.prNumber}</span>
-              <ExternalLink className="h-2.5 w-2.5" />
-            </a>
-          ) : null}
-        </div>
-      ) : null}
+      {/* Diff stats + time ago */}
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        {hasDiff ? (
+          <DiffStats
+            added={session.linesAdded}
+            removed={session.linesRemoved}
+          />
+        ) : (
+          <span />
+        )}
+        <span className="shrink-0">{lastActivityLabel}</span>
+      </div>
     </div>
   );
 }
@@ -336,6 +352,7 @@ const SessionRow = memo(function SessionRow({
   onSessionPrefetch,
   onArchiveSession,
 }: SessionRowProps) {
+  const isMobile = useIsMobile();
   const [isHovered, setIsHovered] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -350,10 +367,12 @@ const SessionRow = memo(function SessionRow({
       leaveTimeoutRef.current = null;
     }
     setIsHovered(true);
-    hoverTimeoutRef.current = setTimeout(() => {
-      setPopoverOpen(true);
-    }, 500);
-  }, []);
+    if (!isMobile) {
+      hoverTimeoutRef.current = setTimeout(() => {
+        setPopoverOpen(true);
+      }, 500);
+    }
+  }, [isMobile]);
 
   const handleMouseLeave = useCallback(() => {
     if (hoverTimeoutRef.current) {
@@ -375,69 +394,75 @@ const SessionRow = memo(function SessionRow({
     };
   }, []);
 
+  const rowButton = (
+    <button
+      type="button"
+      className={`group relative flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left outline-none transition-[background-color,opacity] cursor-pointer ${
+        isActive ? "bg-sidebar-active" : "hover:bg-muted/50"
+      } ${isPending ? "opacity-80" : "opacity-100"}`}
+      style={sessionRowPerformanceStyle}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      onClick={() => onSessionClick(session)}
+      onFocus={() => onSessionPrefetch(session)}
+      aria-busy={isPending}
+    >
+      {/* Status icon */}
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+        {getSessionStatusIcon(session)}
+      </span>
+
+      {/* Session name */}
+      <span className="min-w-0 flex-1 text-left">
+        <p
+          className={`truncate text-[13px] leading-5 ${
+            session.hasUnread && !isActive
+              ? "font-semibold text-foreground"
+              : "font-normal text-foreground/75"
+          }`}
+        >
+          {session.title}
+        </p>
+      </span>
+
+      {/* Right side: shrink-to-fit so diff stats never overlap title */}
+      <span className="flex shrink-0 items-center justify-end">
+        {showArchiveButton ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="rounded p-0.5 text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+                aria-label="Archive session"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onArchiveSession(session);
+                }}
+              >
+                <Archive className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={4}>
+              Archive session
+            </TooltipContent>
+          </Tooltip>
+        ) : hasDiff ? (
+          <DiffStats
+            added={session.linesAdded}
+            removed={session.linesRemoved}
+          />
+        ) : null}
+      </span>
+    </button>
+  );
+
+  if (isMobile) {
+    return rowButton;
+  }
+
   return (
     <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={`group relative flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left outline-none transition-[background-color,opacity] cursor-pointer ${
-            isActive ? "bg-sidebar-active" : "hover:bg-muted/50"
-          } ${isPending ? "opacity-80" : "opacity-100"}`}
-          style={sessionRowPerformanceStyle}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-          onClick={() => onSessionClick(session)}
-          onFocus={() => onSessionPrefetch(session)}
-          aria-busy={isPending}
-        >
-          {/* Status icon */}
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-            {getSessionStatusIcon(session)}
-          </span>
-
-          {/* Session name */}
-          <span className="min-w-0 flex-1 text-left">
-            <p
-              className={`truncate text-[13px] leading-5 ${
-                session.hasUnread && !isActive
-                  ? "font-semibold text-foreground"
-                  : "font-normal text-foreground/75"
-              }`}
-            >
-              {session.title}
-            </p>
-          </span>
-
-          {/* Right side: shrink-to-fit so diff stats never overlap title */}
-          <span className="flex shrink-0 items-center justify-end">
-            {showArchiveButton ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className="rounded p-0.5 text-muted-foreground/60 hover:text-muted-foreground transition-colors"
-                    aria-label="Archive session"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onArchiveSession(session);
-                    }}
-                  >
-                    <Archive className="h-3.5 w-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={4}>
-                  Archive session
-                </TooltipContent>
-              </Tooltip>
-            ) : hasDiff ? (
-              <DiffStats
-                added={session.linesAdded}
-                removed={session.linesRemoved}
-              />
-            ) : null}
-          </span>
-        </button>
-      </PopoverTrigger>
+      <PopoverTrigger asChild>{rowButton}</PopoverTrigger>
       <PopoverContent
         side="right"
         align="start"
