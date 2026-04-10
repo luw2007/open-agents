@@ -1,3 +1,4 @@
+import { getRun } from "workflow/api";
 import {
   requireAuthenticatedUser,
   requireOwnedSessionChat,
@@ -8,6 +9,7 @@ import {
   getChatMessages,
   getChatsBySessionId,
   updateChat,
+  updateChatActiveStreamId,
 } from "@/lib/db/sessions";
 
 type RouteContext = {
@@ -29,6 +31,32 @@ export interface ChatRefreshResponse {
   messages: WebAgentUIMessage[];
 }
 
+async function resolveChatStreamingState(
+  chatId: string,
+  activeStreamId: string | null,
+): Promise<
+  Pick<ChatRefreshResponse, "isStreaming"> & {
+    activeStreamId: string | null;
+  }
+> {
+  if (!activeStreamId) {
+    return { activeStreamId: null, isStreaming: false };
+  }
+
+  try {
+    const run = getRun(activeStreamId);
+    const status = await run.status;
+    if (status === "running" || status === "pending") {
+      return { activeStreamId, isStreaming: true };
+    }
+  } catch {
+    // Workflow run not found — treat as stale.
+  }
+
+  await updateChatActiveStreamId(chatId, null);
+  return { activeStreamId: null, isStreaming: false };
+}
+
 export async function GET(_req: Request, context: RouteContext) {
   const authResult = await requireAuthenticatedUser();
   if (!authResult.ok) {
@@ -46,15 +74,18 @@ export async function GET(_req: Request, context: RouteContext) {
     return chatContext.response;
   }
 
-  const messages = await getChatMessages(chatId);
+  const [messages, streamingState] = await Promise.all([
+    getChatMessages(chatId),
+    resolveChatStreamingState(chatId, chatContext.chat.activeStreamId),
+  ]);
 
   return Response.json({
     chat: {
       id: chatContext.chat.id,
       modelId: chatContext.chat.modelId,
-      activeStreamId: chatContext.chat.activeStreamId,
+      activeStreamId: streamingState.activeStreamId,
     },
-    isStreaming: chatContext.chat.activeStreamId !== null,
+    isStreaming: streamingState.isStreaming,
     messages: messages.map((message) => message.parts as WebAgentUIMessage),
   } satisfies ChatRefreshResponse);
 }

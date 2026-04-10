@@ -39,6 +39,8 @@ type ChatRecord = {
 };
 
 let authResult: AuthResult = { ok: true, userId: "user-1" };
+let workflowRunStatus: string = "completed";
+let shouldThrowForWorkflowRun = false;
 let ownedSessionChatResult: OwnedSessionChatResult = {
   ok: true,
   sessionRecord: { id: "session-1" },
@@ -71,7 +73,23 @@ const updateChatCalls: Array<{
   chatId: string;
   patch: { title?: string; modelId?: string };
 }> = [];
+const updateChatActiveStreamIdCalls: Array<{
+  chatId: string;
+  activeStreamId: string | null;
+}> = [];
 const deleteChatCalls: string[] = [];
+
+mock.module("workflow/api", () => ({
+  getRun: () => {
+    if (shouldThrowForWorkflowRun) {
+      throw new Error("run not found");
+    }
+
+    return {
+      status: Promise.resolve(workflowRunStatus),
+    };
+  },
+}));
 
 mock.module("@/app/api/sessions/_lib/session-context", () => ({
   requireAuthenticatedUser: async () => authResult,
@@ -85,6 +103,12 @@ mock.module("@/lib/db/sessions", () => ({
   ) => {
     updateChatCalls.push({ chatId, patch });
     return updatedChat;
+  },
+  updateChatActiveStreamId: async (
+    chatId: string,
+    activeStreamId: string | null,
+  ) => {
+    updateChatActiveStreamIdCalls.push({ chatId, activeStreamId });
   },
   getChatMessages: async () => chatMessages,
   getChatsBySessionId: async () => chatsInSession,
@@ -116,6 +140,8 @@ function createPatchRequest(body: unknown): Request {
 describe("/api/sessions/[sessionId]/chats/[chatId]", () => {
   beforeEach(() => {
     authResult = { ok: true, userId: "user-1" };
+    workflowRunStatus = "completed";
+    shouldThrowForWorkflowRun = false;
     ownedSessionChatResult = {
       ok: true,
       sessionRecord: { id: "session-1" },
@@ -140,6 +166,7 @@ describe("/api/sessions/[sessionId]/chats/[chatId]", () => {
     };
     chatsInSession = [{ id: "chat-1" }, { id: "chat-2" }];
     updateChatCalls.length = 0;
+    updateChatActiveStreamIdCalls.length = 0;
     deleteChatCalls.length = 0;
   });
 
@@ -155,7 +182,8 @@ describe("/api/sessions/[sessionId]/chats/[chatId]", () => {
     expect(response.status).toBe(401);
   });
 
-  test("GET returns the latest chat snapshot", async () => {
+  test("GET returns the latest chat snapshot when the workflow is still running", async () => {
+    workflowRunStatus = "running";
     ownedSessionChatResult = {
       ok: true,
       sessionRecord: { id: "session-1" },
@@ -193,6 +221,39 @@ describe("/api/sessions/[sessionId]/chats/[chatId]", () => {
     });
     expect(body.isStreaming).toBe(true);
     expect(body.messages).toEqual(chatMessages.map((message) => message.parts));
+    expect(updateChatActiveStreamIdCalls).toHaveLength(0);
+  });
+
+  test("GET clears stale active streams when the workflow is no longer running", async () => {
+    workflowRunStatus = "completed";
+    ownedSessionChatResult = {
+      ok: true,
+      sessionRecord: { id: "session-1" },
+      chat: {
+        id: "chat-1",
+        sessionId: "session-1",
+        modelId: "model-1",
+        activeStreamId: "stream-1",
+      },
+    };
+    const { GET } = await routeModulePromise;
+
+    const response = await GET(createGetRequest(), createContext());
+    const body = (await response.json()) as {
+      chat: { id: string; modelId: string; activeStreamId: string | null };
+      isStreaming: boolean;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.chat).toEqual({
+      id: "chat-1",
+      modelId: "model-1",
+      activeStreamId: null,
+    });
+    expect(body.isStreaming).toBe(false);
+    expect(updateChatActiveStreamIdCalls).toEqual([
+      { chatId: "chat-1", activeStreamId: null },
+    ]);
   });
 
   test("PATCH returns auth error from guard", async () => {

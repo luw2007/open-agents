@@ -1434,12 +1434,13 @@ export function SessionChatContent({
 
     const data = (await response.json()) as ChatRefreshResponse;
     if (data.isStreaming) {
+      await setChatStreaming(chatInfo.id, true).catch(() => undefined);
       return;
     }
 
     clearError();
     setMessages(data.messages);
-  }, [chatInfo.id, clearError, session.id, setMessages]);
+  }, [chatInfo.id, clearError, session.id, setChatStreaming, setMessages]);
 
   const refreshAfterTabResume = useCallback(async (): Promise<void> => {
     if (
@@ -1493,6 +1494,26 @@ export function SessionChatContent({
   useEffect(() => {
     hasRequestedSessionTitleGenerationRef.current = false;
   }, [session.id]);
+
+  useEffect(() => {
+    if (!chatInfo.activeStreamId) {
+      return;
+    }
+
+    void setChatStreaming(chatInfo.id, true);
+  }, [chatInfo.activeStreamId, chatInfo.id, setChatStreaming]);
+
+  useEffect(() => {
+    if (!isChatInFlight) {
+      return;
+    }
+
+    void setChatStreaming(chatInfo.id, true);
+  }, [chatInfo.id, isChatInFlight, setChatStreaming]);
+
+  useEffect(() => {
+    void refreshCurrentChatSnapshot();
+  }, [refreshCurrentChatSnapshot]);
 
   // Refresh chats list when the first message completes to pick up the auto-generated title
   useEffect(() => {

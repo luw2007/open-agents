@@ -659,76 +659,79 @@ export function useSessionChats(
     );
   };
 
-  const setChatStreaming = async (chatId: string, isStreaming: boolean) => {
-    if (!sessionId) {
-      throw new Error("Missing sessionId");
-    }
+  const setChatStreaming = useCallback(
+    async (chatId: string, isStreaming: boolean) => {
+      if (!sessionId) {
+        throw new Error("Missing sessionId");
+      }
 
-    if (isStreaming) {
-      updateOverlay(chatId, (overlay) => ({
-        ...overlay,
-        streaming: {
-          setAt: Date.now(),
-          seenServerStreaming: false,
-        },
-      }));
-    } else {
-      updateOverlay(chatId, (overlay) => {
-        const next = { ...overlay };
-        delete next.streaming;
-        return next;
-      });
-    }
-
-    void mutateSessionSummaries<SessionsResponse>(
-      "/api/sessions",
-      (current) => {
-        if (!current) {
-          return current;
-        }
-
-        let changed = false;
-        const sessions = current.sessions.map((session) => {
-          if (session.id !== sessionId) {
-            return session;
-          }
-
-          if (
-            session.hasStreaming === isStreaming &&
-            session.latestChatId === chatId
-          ) {
-            return session;
-          }
-
-          changed = true;
-          return {
-            ...session,
-            hasStreaming: isStreaming,
-            latestChatId: chatId,
-          };
+      if (isStreaming) {
+        updateOverlay(chatId, (overlay) => ({
+          ...overlay,
+          streaming: {
+            setAt: Date.now(),
+            seenServerStreaming: false,
+          },
+        }));
+      } else {
+        updateOverlay(chatId, (overlay) => {
+          const next = { ...overlay };
+          delete next.streaming;
+          return next;
         });
+      }
 
-        return changed ? { ...current, sessions } : current;
-      },
-      { revalidate: false },
-    );
+      void mutateSessionSummaries<SessionsResponse>(
+        "/api/sessions",
+        (current) => {
+          if (!current) {
+            return current;
+          }
 
-    await mutate(
-      (current) => {
-        if (!current) {
-          return current;
-        }
+          let changed = false;
+          const sessions = current.sessions.map((session) => {
+            if (session.id !== sessionId) {
+              return session;
+            }
 
-        return toChatsResponse(
-          current,
-          current.chats.map((chat) =>
-            chat.id === chatId ? { ...chat, isStreaming } : chat,
-          ),
-        );
-      },
-      { revalidate: false },
-    );
-  };
+            if (
+              session.hasStreaming === isStreaming &&
+              session.latestChatId === chatId
+            ) {
+              return session;
+            }
+
+            changed = true;
+            return {
+              ...session,
+              hasStreaming: isStreaming,
+              latestChatId: chatId,
+            };
+          });
+
+          return changed ? { ...current, sessions } : current;
+        },
+        { revalidate: false },
+      );
+
+      await mutate(
+        (current) => {
+          if (!current) {
+            return current;
+          }
+
+          return toChatsResponse(
+            current,
+            current.chats.map((chat) =>
+              chat.id === chatId ? { ...chat, isStreaming } : chat,
+            ),
+          );
+        },
+        { revalidate: false },
+      );
+    },
+    [mutate, mutateSessionSummaries, sessionId, toChatsResponse, updateOverlay],
+  );
 
   const setChatTitle = (chatId: string, title: string) => {
     const trimmedTitle = title.trim();
