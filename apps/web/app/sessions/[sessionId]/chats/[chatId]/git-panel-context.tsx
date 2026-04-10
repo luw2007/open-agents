@@ -48,6 +48,14 @@ type GitPanelContextValue = {
   hasActionNeeded: boolean;
   setHasActionNeeded: (needed: boolean) => void;
 
+  /** Number of changed files (for badge display on toggle button) */
+  changesCount: number;
+  setChangesCount: (count: number) => void;
+
+  /** Whether there are committed (pushed) changes on the branch */
+  hasCommittedChanges: boolean;
+  setHasCommittedChanges: (has: boolean) => void;
+
   /** Share dialog trigger (set by per-chat page, called by header) */
   shareRequested: boolean;
   setShareRequested: (requested: boolean) => void;
@@ -71,6 +79,8 @@ export function GitPanelProvider({ children }: { children: ReactNode }) {
   const [changesTabDismissed, setChangesTabDismissed] = useState(false);
   const [diffScope, setDiffScope] = useState<DiffScope>("uncommitted");
   const [hasActionNeeded, setHasActionNeeded] = useState(false);
+  const [changesCount, setChangesCount] = useState(0);
+  const [hasCommittedChanges, setHasCommittedChanges] = useState(false);
   const [shareRequested, setShareRequested] = useState(false);
   const panelPortalRef = useRef<HTMLDivElement | null>(null);
   const headerActionsRef = useRef<HTMLDivElement | null>(null);
@@ -103,6 +113,10 @@ export function GitPanelProvider({ children }: { children: ReactNode }) {
       setDiffScope,
       hasActionNeeded,
       setHasActionNeeded,
+      changesCount,
+      setChangesCount,
+      hasCommittedChanges,
+      setHasCommittedChanges,
       shareRequested,
       setShareRequested,
       panelPortalRef,
@@ -118,6 +132,8 @@ export function GitPanelProvider({ children }: { children: ReactNode }) {
       openDiffToFile,
       diffScope,
       hasActionNeeded,
+      changesCount,
+      hasCommittedChanges,
       shareRequested,
     ],
   );

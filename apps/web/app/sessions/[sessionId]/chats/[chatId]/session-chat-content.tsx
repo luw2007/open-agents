@@ -40,6 +40,7 @@ import useSWR from "swr";
 import type { ChatRefreshResponse } from "@/app/api/sessions/[sessionId]/chats/[chatId]/route";
 import type { MergePullRequestResponse } from "@/app/api/sessions/[sessionId]/merge/route";
 import type { PrDeploymentResponse } from "@/app/api/sessions/[sessionId]/pr-deployment/route";
+import type { PullRequestCheckRun } from "@/lib/github/client";
 import type {
   WebAgentCommitDataPart,
   WebAgentPrDataPart,
@@ -58,7 +59,7 @@ import { TextAttachmentsPreview } from "@/components/text-attachments-preview";
 import { ModelSelectorCompact } from "@/components/model-selector-compact";
 import { QuestionPanel } from "@/components/question-panel";
 import { SlashCommandDropdown } from "@/components/slash-command-dropdown";
-import { SnippetChip as _SnippetChip } from "@/components/snippet-chip";
+import { SnippetChip } from "@/components/snippet-chip";
 import { AssistantMessageGroups } from "@/components/assistant-message-groups";
 import {
   PinnedTodoPanel,
@@ -98,6 +99,7 @@ import {
   isChatInFlight as isChatInFlightStatus,
   isGitDataPart,
   shouldKeepCollapsedReasoningStreaming,
+  shouldRenderGitDataPart,
   shouldShowThinkingIndicator,
 } from "@/lib/chat-streaming-state";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
@@ -117,7 +119,6 @@ import { useStreamRecovery } from "./hooks/use-stream-recovery";
 import { useAutoCommitStatus } from "./hooks/use-auto-commit-status";
 import { useCodeEditor } from "./hooks/use-code-editor";
 import { useDevServer } from "./hooks/use-dev-server";
-
 import { useGitPanel } from "./git-panel-context";
 import { GitPanel } from "./git-panel";
 import {
@@ -228,7 +229,7 @@ function getReasoningGroupText(parts: ReasoningMessagePart[]): string {
     .join("\n\n");
 }
 
-function _GitDataPartCard({
+function GitDataPartCard({
   part,
 }: {
   part: WebAgentCommitDataPart | WebAgentPrDataPart;
@@ -883,6 +884,8 @@ export function SessionChatContent({
     shareRequested,
     setShareRequested,
     setHasActionNeeded,
+    setChangesCount,
+    setHasCommittedChanges,
     panelPortalRef,
     headerActionsRef,
   } = useGitPanel();
@@ -1040,8 +1043,10 @@ export function SessionChatContent({
   const {
     sandboxInfo,
     diff,
+    diffRefreshing,
     refreshDiff,
     gitStatus,
+    gitStatusLoading,
     refreshGitStatus,
     files,
     filesLoading,
@@ -1666,6 +1671,46 @@ export function SessionChatContent({
       }
     },
     [chatInfo.id, sendMessage, setChatStreaming],
+  );
+
+  const handleFixChecks = useCallback(
+    async (failedRuns: PullRequestCheckRun[]) => {
+      let text = "";
+      try {
+        const res = await fetch(`/api/sessions/${session.id}/checks/fix`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ checkRuns: failedRuns }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { message: string };
+          text = data.message;
+        }
+      } catch {
+        // Fall through to fallback
+      }
+
+      if (!text) {
+        const names = failedRuns.map((run) => run.name).join(", ");
+        text = `# Fix Failing Checks\n\nThe following checks are failing: ${names}. Please investigate and push a fix.`;
+      }
+
+      await sendMessageWithPendingState({ text });
+    },
+    [sendMessageWithPendingState, session.id],
+  );
+
+  const handleFixConflicts = useCallback(
+    async (baseBranchRef: string, closeMergeDialog = false) => {
+      if (closeMergeDialog) {
+        setMergeDialogOpen(false);
+      }
+
+      await sendMessageWithPendingState({
+        text: `# Resolve Merge Conflicts\n\nThere is a merge conflict with ${baseBranchRef}. Fetch and then fix the conflicts. Do not rebase.`,
+      });
+    },
+    [sendMessageWithPendingState],
   );
 
   const handleDeleteUserMessage = useCallback(
@@ -2576,7 +2621,7 @@ export function SessionChatContent({
     prDeploymentUrl,
   ]);
 
-  const _isDeploymentStale = branchPreviewUrlChangeBaseline !== undefined;
+  const isDeploymentStale = branchPreviewUrlChangeBaseline !== undefined;
 
   // When auto-commit lands (transitions from committing to clean), mark the
   // current preview deployment as stale so the UI shows "Deploying…" until
@@ -2612,32 +2657,31 @@ export function SessionChatContent({
   useEffect(() => {
     setHasActionNeeded(showCommitAction);
   }, [showCommitAction, setHasActionNeeded]);
+
+  // Sync the file change count for the badge on the toggle button
+  const totalChangesCount = diff?.files?.length ?? 0;
+  useEffect(() => {
+    setChangesCount(totalChangesCount);
+  }, [totalChangesCount, setChangesCount]);
+
+  // Sync the "committed changes" indicator (blue dot) — branch has committed
+  // changes, no PR created yet, and no uncommitted changes to deal with
+  useEffect(() => {
+    setHasCommittedChanges(
+      hasRepo &&
+        totalChangesCount > 0 &&
+        !hasExistingPr &&
+        !hasUncommittedGitChanges,
+    );
+  }, [
+    hasRepo,
+    totalChangesCount,
+    hasExistingPr,
+    hasUncommittedGitChanges,
+    setHasCommittedChanges,
+  ]);
   const hasOpenPr = hasExistingPr && session.prStatus === "open";
-  const _canMergeAndArchive = hasOpenPr && !showCommitAction && !isArchived;
-  const _canCloseAndArchive = hasOpenPr && !isArchived;
-  const _openExistingPr = () => {
-    if (!existingPrUrl) {
-      return;
-    }
-
-    window.open(existingPrUrl, "_blank", "noopener,noreferrer");
-  };
-  const _openPreviewOrPr = () => {
-    const targetUrl = prDeploymentUrl ?? existingPrUrl;
-    if (!targetUrl) {
-      return;
-    }
-
-    window.open(targetUrl, "_blank", "noopener,noreferrer");
-  };
-  const _openBuildingDeployment = () => {
-    if (!buildingDeploymentUrl) {
-      return;
-    }
-
-    window.open(buildingDeploymentUrl, "_blank", "noopener,noreferrer");
-  };
-
+  const canCloseAndArchive = hasOpenPr && !isArchived;
   const handleCommitted = useCallback(async () => {
     if (hasExistingPr || hasBranchPreviewLookup) {
       setBranchPreviewUrlChangeBaseline(prDeploymentUrl);
@@ -2729,40 +2773,28 @@ export function SessionChatContent({
       hasRepo={hasRepo}
       hasExistingPr={hasExistingPr}
       existingPrUrl={existingPrUrl}
+      prDeploymentUrl={prDeploymentUrl}
+      buildingDeploymentUrl={buildingDeploymentUrl}
+      isDeploymentStale={isDeploymentStale}
       hasUncommittedGitChanges={hasUncommittedGitChanges}
       supportsRepoCreation={supportsRepoCreation}
       hasDiff={Boolean(diff || session.cachedDiff)}
+      canCloseAndArchive={canCloseAndArchive}
       diffFiles={diff?.files ?? null}
       diffSummary={diff?.summary ?? null}
+      diffRefreshing={diffRefreshing}
       onCreateRepoClick={() => setRepoDialogOpen(true)}
+      refreshDiff={refreshDiff}
       onMerged={handleMerged}
-      onFixChecks={async (failedRuns) => {
-        let text = "";
-        try {
-          const res = await fetch(`/api/sessions/${session.id}/checks/fix`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ checkRuns: failedRuns }),
-          });
-          if (res.ok) {
-            const data = (await res.json()) as { message: string };
-            text = data.message;
-          }
-        } catch {
-          // Fall through to fallback
-        }
-
-        if (!text) {
-          const names = failedRuns.map((r) => r.name).join(", ");
-          text = `# Fix Failing Checks\n\nThe following checks are failing: ${names}. Please investigate and push a fix.`;
-        }
-
-        void sendMessageWithPendingState({ text });
-      }}
+      onCloseAndArchiveClick={() => setCloseDialogOpen(true)}
+      onFixChecks={handleFixChecks}
+      onFixConflicts={(baseBranchRef) => handleFixConflicts(baseBranchRef)}
       hasSandbox={sandboxInfo !== null}
       gitStatus={gitStatus}
+      gitStatusLoading={gitStatusLoading}
       refreshGitStatus={refreshGitStatus}
       onCommitted={handleCommitted}
+      isAgentWorking={hasPendingResponse || isChatInFlight}
       onPrDetected={(pr) => {
         updateSessionPullRequest(pr);
         void refreshGitStatus().catch(() => {});
@@ -2776,17 +2808,17 @@ export function SessionChatContent({
       {panelPortalRef.current &&
         createPortal(gitPanelElement, panelPortalRef.current)}
 
-      {/* Dev server / code editor buttons portaled to header */}
+      {/* Header actions portaled from chat-level state */}
       {headerActionsRef.current &&
         canRunDevServer &&
         createPortal(
-          <>
+          <div className="flex items-center gap-1">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7"
+                  className="hidden h-7 w-7 sm:inline-flex"
                   onClick={() => void codeEditor.handleOpen()}
                   disabled={
                     codeEditor.state.status === "starting" ||
@@ -2804,8 +2836,7 @@ export function SessionChatContent({
                 {codeEditor.menuLabel}
               </TooltipContent>
             </Tooltip>
-            {/* Dev server — fixed h-7 wrapper prevents layout shift */}
-            <div className="flex h-7 items-center">
+            <div className="hidden h-7 items-center sm:flex">
               {devServer.state.status === "ready" ? (
                 <div className="flex items-center rounded-md border border-border px-0.5">
                   <Tooltip>
@@ -2876,7 +2907,7 @@ export function SessionChatContent({
                 </Tooltip>
               )}
             </div>
-          </>,
+          </div>,
           headerActionsRef.current,
         )}
       <div className="flex h-full flex-col overflow-hidden">
@@ -2985,7 +3016,11 @@ export function SessionChatContent({
                             const renderGroups = (
                               isToolCallsExpanded: boolean,
                             ) =>
-                              groups.map((group) => {
+                              groups.map((group, groupRenderIndex) => {
+                                const previousGroup =
+                                  groupRenderIndex > 0
+                                    ? groups[groupRenderIndex - 1]
+                                    : null;
                                 if (group.type === "reasoning-group") {
                                   if (!isToolCallsExpanded) return null;
                                   const hasRenderableContentAfterGroup = m.parts
@@ -3225,6 +3260,21 @@ export function SessionChatContent({
                                   );
                                 }
 
+                                if (isGitDataPart(p)) {
+                                  if (!shouldRenderGitDataPart(p)) {
+                                    return null;
+                                  }
+
+                                  return (
+                                    <div
+                                      key={`${m.id}-${group.renderKey}`}
+                                      className="max-w-full"
+                                    >
+                                      <GitDataPartCard part={p} />
+                                    </div>
+                                  );
+                                }
+
                                 // Render image attachments
                                 if (
                                   p.type === "file" &&
@@ -3247,6 +3297,60 @@ export function SessionChatContent({
                                           src={p.url}
                                           alt={p.filename ?? "Attached image"}
                                           className="max-h-64 rounded-lg"
+                                        />
+                                        {m.role === "user" &&
+                                          group.index === 0 && (
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                void handleDeleteUserMessage(
+                                                  m.id,
+                                                )
+                                              }
+                                              disabled={
+                                                hasMessageActionInFlight
+                                              }
+                                              aria-label="Delete this message and everything after it"
+                                              className="absolute -left-10 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition hover:text-destructive group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                            >
+                                              {deletingMessageId === m.id ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                              ) : (
+                                                <Trash2 className="h-4 w-4" />
+                                              )}
+                                            </button>
+                                          )}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                if (p.type === "data-snippet") {
+                                  if (
+                                    !isToolCallsExpanded &&
+                                    m.role === "assistant"
+                                  ) {
+                                    return null;
+                                  }
+                                  const followsUserTextPart =
+                                    m.role === "user" &&
+                                    previousGroup?.type === "part" &&
+                                    previousGroup.part.type === "text";
+                                  return (
+                                    <div
+                                      key={`${m.id}-${group.renderKey}`}
+                                      className={cn(
+                                        "flex",
+                                        m.role === "user"
+                                          ? "justify-end"
+                                          : "justify-start",
+                                        followsUserTextPart && "-mt-2",
+                                      )}
+                                    >
+                                      <div className="group relative w-fit max-w-[80%]">
+                                        <SnippetChip
+                                          filename={p.data.filename}
+                                          content={p.data.content}
                                         />
                                         {m.role === "user" &&
                                           group.index === 0 && (
@@ -3885,34 +3989,14 @@ export function SessionChatContent({
           onMerged={handleMerged}
           onViewDiff={() => setShowDiffPanel(true)}
           canViewDiff={supportsDiff && Boolean(diff || session.cachedDiff)}
+          isAgentWorking={hasPendingResponse || isChatInFlight}
           onFixChecks={async (failedRuns) => {
             setMergeDialogOpen(false);
-
-            let text = "";
-            try {
-              const res = await fetch(
-                `/api/sessions/${session.id}/checks/fix`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ checkRuns: failedRuns }),
-                },
-              );
-              if (res.ok) {
-                const data = (await res.json()) as { message: string };
-                text = data.message;
-              }
-            } catch {
-              // Fall through to fallback
-            }
-
-            if (!text) {
-              const names = failedRuns.map((r) => r.name).join(", ");
-              text = `# Fix Failing Checks\n\nThe following checks are failing: ${names}. Please investigate and push a fix.`;
-            }
-
-            void sendMessageWithPendingState({ text });
+            await handleFixChecks(failedRuns);
           }}
+          onFixConflicts={(baseBranchRef) =>
+            handleFixConflicts(baseBranchRef, true)
+          }
         />
       )}
 
@@ -3961,6 +4045,19 @@ export function SessionChatContent({
         }
         onOpenInEditor={(filePath) => {
           void codeEditor.handleOpenFile(filePath);
+        }}
+        onAddToPrompt={(filePath, selectedText, comment) => {
+          // Build a single snippet with file ref, selected text, and the user's comment
+          const parts = [`File: ${filePath}`, "```", selectedText, "```"];
+          if (comment) {
+            parts.push("", `> ${comment}`);
+          }
+          const basename = filePath.split("/").pop() ?? filePath;
+          addTextAttachment(parts.join("\n"), `comment-on-${basename}`);
+          // Focus the input after a brief delay (keep file viewer open)
+          setTimeout(() => {
+            inputRef.current?.focus();
+          }, 100);
         }}
       />
     </>

@@ -36,10 +36,10 @@ function SessionLayoutInner({
   activeChatId: string;
   children: ReactNode;
 }) {
-  const { panelPortalRef, gitPanelOpen } = useGitPanel();
+  const { panelPortalRef, gitPanelOpen, setGitPanelOpen } = useGitPanel();
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="relative flex h-full overflow-hidden">
       {/* Left column: header + tabs + page content */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <SessionHeader />
@@ -47,15 +47,24 @@ function SessionLayoutInner({
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
       </div>
 
-      {/* Portal target for the git panel — reserves space when panel is open
-          so the layout doesn't shift during chat navigation. */}
+      {/* Mobile backdrop for outside-click dismissal */}
+      {gitPanelOpen && (
+        <button
+          type="button"
+          aria-label="Close right sidebar"
+          className="absolute inset-0 z-20 bg-background/20 sm:hidden"
+          onClick={() => setGitPanelOpen(false)}
+        />
+      )}
+
+      {/* Portal target for the git panel — slideover on mobile, sidebar on larger screens */}
       <div
         ref={panelPortalRef}
-        className={
+        className={`absolute right-0 top-0 z-30 flex h-full w-72 flex-col overflow-hidden border-l border-border bg-background shadow-lg transition-transform duration-200 ease-in-out sm:relative sm:right-auto sm:top-auto sm:z-0 sm:shrink-0 sm:translate-x-0 sm:shadow-none sm:transition-[width] ${
           gitPanelOpen
-            ? "flex h-full w-72 shrink-0 flex-col border-l border-border bg-background xl:w-80"
-            : "hidden"
-        }
+            ? "translate-x-0 sm:w-72 sm:border-l xl:w-80"
+            : "translate-x-full sm:w-0 sm:border-l-0"
+        }`}
       />
     </div>
   );
@@ -97,6 +106,7 @@ export function SessionLayoutShell({
         branch: initialSession.branch,
         status: initialSession.status,
         prNumber: initialSession.prNumber,
+        prStatus: initialSession.prStatus ?? null,
         linesAdded: initialSession.linesAdded,
         linesRemoved: initialSession.linesRemoved,
       },

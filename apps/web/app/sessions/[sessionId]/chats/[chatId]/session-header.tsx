@@ -1,6 +1,15 @@
 "use client";
 
-import { ExternalLink, FolderGit2, Link2, PanelLeft } from "lucide-react";
+import {
+  ExternalLink,
+  FolderGit2,
+  GitMerge,
+  GitPullRequest,
+  GitPullRequestClosed,
+  Link2,
+  PanelLeft,
+} from "lucide-react";
+import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -22,10 +31,49 @@ export function SessionHeader() {
     gitPanelOpen,
     toggleGitPanel,
     hasActionNeeded,
+    changesCount,
+    hasCommittedChanges,
     setShareRequested,
     headerActionsRef,
   } = useGitPanel();
   const { session } = useSessionLayout();
+
+  // Determine the icon and color based on PR state
+  const prState = useMemo(() => {
+    if (!session.prNumber) return null;
+    const status = session.prStatus;
+    if (status === "merged")
+      return { icon: GitMerge, color: "text-purple-500" } as const;
+    if (status === "closed")
+      return { icon: GitPullRequestClosed, color: "text-red-500" } as const;
+    return { icon: GitPullRequest, color: "text-green-500" } as const;
+  }, [session.prNumber, session.prStatus]);
+
+  const GitIcon = prState?.icon ?? FolderGit2;
+  const iconColor = prState?.color ?? undefined;
+
+  // Build contextual tooltip
+  const tooltipText = useMemo(() => {
+    const parts: string[] = [];
+    if (session.prNumber) {
+      const statusLabel =
+        session.prStatus === "merged"
+          ? "Merged"
+          : session.prStatus === "closed"
+            ? "Closed"
+            : "Open";
+      parts.push(`PR #${session.prNumber} (${statusLabel})`);
+    }
+    if (changesCount > 0) {
+      parts.push(
+        `${changesCount} file${changesCount !== 1 ? "s" : ""} changed`,
+      );
+    }
+    if (hasActionNeeded) {
+      parts.push("Uncommitted changes");
+    }
+    return parts.length > 0 ? parts.join(" · ") : "Git panel";
+  }, [session.prNumber, session.prStatus, changesCount, hasActionNeeded]);
 
   return (
     <header className="border-b border-border px-3 py-1.5">
@@ -112,13 +160,18 @@ export function SessionHeader() {
                 )}
                 onClick={toggleGitPanel}
               >
-                <FolderGit2 className="h-4 w-4" />
-                {hasActionNeeded && !gitPanelOpen && (
+                <GitIcon
+                  className={cn("h-4 w-4", !gitPanelOpen && iconColor)}
+                />
+                {!gitPanelOpen && hasActionNeeded && (
                   <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-amber-500" />
+                )}
+                {!gitPanelOpen && !hasActionNeeded && hasCommittedChanges && (
+                  <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-blue-500" />
                 )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Toggle right sidebar</TooltipContent>
+            <TooltipContent side="bottom">{tooltipText}</TooltipContent>
           </Tooltip>
         </div>
       </div>

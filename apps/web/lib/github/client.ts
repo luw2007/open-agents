@@ -100,6 +100,36 @@ function getGitHubHttpStatus(error: unknown): number | null {
   return null;
 }
 
+function getGitHubErrorMessage(error: unknown): string | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const errorRecord = error as {
+    message?: unknown;
+    response?: { data?: { message?: unknown } };
+    cause?: {
+      message?: unknown;
+      response?: { data?: { message?: unknown } };
+    };
+  };
+
+  const messageCandidates = [
+    errorRecord.response?.data?.message,
+    errorRecord.cause?.response?.data?.message,
+    errorRecord.message,
+    errorRecord.cause?.message,
+  ];
+
+  for (const message of messageCandidates) {
+    if (typeof message === "string" && message.trim().length > 0) {
+      return message.trim();
+    }
+  }
+
+  return null;
+}
+
 export function parseGitHubUrl(
   repoUrl: string,
 ): { owner: string; repo: string } | null {
@@ -270,22 +300,20 @@ function getCombinedStatusState(state: string): PullRequestCheckState {
   return "failed";
 }
 
-function summarizeCheckRuns(
-  runs: Array<{ status: string | null; conclusion: string | null }>,
+function summarizeResolvedCheckRuns(
+  checkRuns: PullRequestCheckRun[],
 ): PullRequestCheckSummary {
   let passed = 0;
   let pending = 0;
   let failed = 0;
 
-  for (const run of runs) {
-    const state = getCheckRunState(run.status, run.conclusion);
-
-    if (state === "passed") {
+  for (const checkRun of checkRuns) {
+    if (checkRun.state === "passed") {
       passed += 1;
       continue;
     }
 
-    if (state === "pending") {
+    if (checkRun.state === "pending") {
       pending += 1;
       continue;
     }
@@ -294,42 +322,34 @@ function summarizeCheckRuns(
   }
 
   return {
-    requiredTotal: runs.length,
+    requiredTotal: checkRuns.length,
     passed,
     pending,
     failed,
   };
 }
 
-function summarizeCombinedStatuses(
-  statuses: Array<{ state: string }>,
-): PullRequestCheckSummary {
-  let passed = 0;
-  let pending = 0;
-  let failed = 0;
-
-  for (const status of statuses) {
-    const checkState = getCombinedStatusState(status.state);
-
-    if (checkState === "passed") {
-      passed += 1;
-      continue;
-    }
-
-    if (checkState === "pending") {
-      pending += 1;
-      continue;
-    }
-
-    failed += 1;
+function appendMissingCheckRuns(
+  existingCheckRuns: PullRequestCheckRun[],
+  additionalCheckRuns: PullRequestCheckRun[],
+): PullRequestCheckRun[] {
+  if (additionalCheckRuns.length === 0) {
+    return existingCheckRuns;
   }
 
-  return {
-    requiredTotal: statuses.length,
-    passed,
-    pending,
-    failed,
-  };
+  const seenNames = new Set(existingCheckRuns.map((checkRun) => checkRun.name));
+  const mergedCheckRuns = [...existingCheckRuns];
+
+  for (const checkRun of additionalCheckRuns) {
+    if (seenNames.has(checkRun.name)) {
+      continue;
+    }
+
+    seenNames.add(checkRun.name);
+    mergedCheckRuns.push(checkRun);
+  }
+
+  return mergedCheckRuns;
 }
 
 function resolveDefaultMergeMethod(
@@ -375,6 +395,26 @@ function reasonsFromMergeableState(
   }
 
   return [];
+}
+
+function shouldRetryMergeability(
+  pullRequest: {
+    mergeable: boolean | null;
+    mergeable_state: string | null;
+  },
+  checksSummary: PullRequestCheckSummary,
+): boolean {
+  if (pullRequest.mergeable === null) {
+    return true;
+  }
+
+  return (
+    checksSummary.requiredTotal > 0 &&
+    checksSummary.pending === 0 &&
+    checksSummary.failed === 0 &&
+    (pullRequest.mergeable_state === "blocked" ||
+      pullRequest.mergeable_state === "unstable")
+  );
 }
 
 export async function getPullRequestMergeReadiness(params: {
@@ -427,38 +467,7 @@ export async function getPullRequestMergeReadiness(params: {
 
     let pullRequest = initialPullRequestResponse.data;
 
-    for (
-      let attempt = 0;
-      attempt < MERGEABILITY_MAX_POLL_ATTEMPTS &&
-      pullRequest.mergeable === null;
-      attempt += 1
-    ) {
-      await delay(MERGEABILITY_POLL_DELAY_MS);
-
-      try {
-        const refreshedPullRequestResponse =
-          await result.octokit.rest.pulls.get({
-            owner,
-            repo,
-            pull_number: prNumber,
-          });
-
-        pullRequest = refreshedPullRequestResponse.data;
-      } catch (refreshError) {
-        const refreshStatus = getGitHubHttpStatus(refreshError);
-        if (refreshStatus !== 403 && refreshStatus !== 404) {
-          console.warn(
-            "Failed to refresh pull request mergeability state:",
-            refreshError,
-          );
-        }
-        break;
-      }
-    }
-
     const repository = repositoryResponse.data;
-    const isDraft = Boolean(pullRequest.draft);
-
     const allowedMethods: PullRequestMergeMethod[] = [];
     if (repository.allow_squash_merge) {
       allowedMethods.push("squash");
@@ -499,13 +508,6 @@ export async function getPullRequestMergeReadiness(params: {
         conclusion: checkRun.conclusion,
         detailsUrl: checkRun.details_url ?? null,
       }));
-
-      checksSummary = summarizeCheckRuns(
-        checkRuns.map((checkRun) => ({
-          status: checkRun.status,
-          conclusion: checkRun.conclusion,
-        })),
-      );
     } catch (checksError) {
       const checksStatus = getGitHubHttpStatus(checksError);
       if (checksStatus !== 403 && checksStatus !== 404) {
@@ -516,7 +518,11 @@ export async function getPullRequestMergeReadiness(params: {
       }
     }
 
-    if (checksSummary.requiredTotal === 0) {
+    if (
+      checkRuns.length === 0 ||
+      pullRequest.mergeable_state === "blocked" ||
+      pullRequest.mergeable_state === "unstable"
+    ) {
       try {
         const statusesResponse =
           await result.octokit.rest.repos.getCombinedStatusForRef({
@@ -525,26 +531,18 @@ export async function getPullRequestMergeReadiness(params: {
             ref: pullRequest.head.sha,
           });
 
-        const statuses = statusesResponse.data.statuses.map((status) => ({
-          state: status.state,
-          context: status.context,
-          targetUrl: status.target_url,
-        }));
-
-        checkRuns = statuses.map((status) => ({
-          id: 0,
-          name: status.context || "Status check",
-          state: getCombinedStatusState(status.state),
-          status: status.state,
-          conclusion: null,
-          detailsUrl: status.targetUrl ?? null,
-        }));
-
-        checksSummary = summarizeCombinedStatuses(
-          statuses.map((status) => ({
-            state: status.state,
-          })),
+        const statusCheckRuns = statusesResponse.data.statuses.map(
+          (status) => ({
+            id: 0,
+            name: status.context || "Status check",
+            state: getCombinedStatusState(status.state),
+            status: status.state,
+            conclusion: null,
+            detailsUrl: status.target_url ?? null,
+          }),
         );
+
+        checkRuns = appendMissingCheckRuns(checkRuns, statusCheckRuns);
       } catch (statusError) {
         const statusCode = getGitHubHttpStatus(statusError);
         if (statusCode !== 403 && statusCode !== 404) {
@@ -556,13 +554,9 @@ export async function getPullRequestMergeReadiness(params: {
       }
     }
 
-    // When we have no check run details but the mergeable state indicates
-    // checks are required, try to fetch required status check names from
-    // branch protection so we can at least show which checks are expected.
     if (
-      checkRuns.length === 0 &&
-      (pullRequest.mergeable_state === "unstable" ||
-        pullRequest.mergeable_state === "blocked")
+      pullRequest.mergeable_state === "unstable" ||
+      pullRequest.mergeable_state === "blocked"
     ) {
       try {
         const protectionResponse =
@@ -574,29 +568,54 @@ export async function getPullRequestMergeReadiness(params: {
 
         const requiredContexts: string[] =
           protectionResponse.data.contexts ?? [];
+        const expectedCheckRuns = requiredContexts.map((context) => ({
+          id: 0,
+          name: context,
+          state: "pending" as PullRequestCheckState,
+          status: "expected",
+          conclusion: null,
+          detailsUrl: null,
+        }));
 
-        if (requiredContexts.length > 0) {
-          checkRuns = requiredContexts.map((context) => ({
-            id: 0,
-            name: context,
-            state: "pending" as PullRequestCheckState,
-            status: "expected",
-            conclusion: null,
-            detailsUrl: null,
-          }));
-
-          checksSummary = {
-            requiredTotal: requiredContexts.length,
-            passed: 0,
-            pending: requiredContexts.length,
-            failed: 0,
-          };
-        }
+        checkRuns = appendMissingCheckRuns(checkRuns, expectedCheckRuns);
       } catch {
         // Branch protection endpoint may require admin access — ignore
         // failures silently since this is a best-effort fallback.
       }
     }
+
+    checksSummary = summarizeResolvedCheckRuns(checkRuns);
+
+    for (
+      let attempt = 0;
+      attempt < MERGEABILITY_MAX_POLL_ATTEMPTS &&
+      shouldRetryMergeability(pullRequest, checksSummary);
+      attempt += 1
+    ) {
+      await delay(MERGEABILITY_POLL_DELAY_MS);
+
+      try {
+        const refreshedPullRequestResponse =
+          await result.octokit.rest.pulls.get({
+            owner,
+            repo,
+            pull_number: prNumber,
+          });
+
+        pullRequest = refreshedPullRequestResponse.data;
+      } catch (refreshError) {
+        const refreshStatus = getGitHubHttpStatus(refreshError);
+        if (refreshStatus !== 403 && refreshStatus !== 404) {
+          console.warn(
+            "Failed to refresh pull request mergeability state:",
+            refreshError,
+          );
+        }
+        break;
+      }
+    }
+
+    const isDraft = Boolean(pullRequest.draft);
 
     const reasons = new Set<string>();
 
@@ -1020,33 +1039,35 @@ export async function mergePullRequest(params: {
   } catch (error: unknown) {
     console.error("Error merging PR:", error);
 
-    const httpError = error as { status?: number };
-    if (httpError.status === 405) {
+    const statusCode = getGitHubHttpStatus(error);
+    if (statusCode === 405) {
       return {
         success: false,
-        error: "Branch protection requirements are not satisfied",
-        statusCode: 405,
+        error:
+          getGitHubErrorMessage(error) ??
+          "Branch protection requirements are not satisfied",
+        statusCode,
       };
     }
-    if (httpError.status === 409) {
+    if (statusCode === 409) {
       return {
         success: false,
         error: "Pull request has conflicts or is out of date",
-        statusCode: 409,
+        statusCode,
       };
     }
-    if (httpError.status === 422) {
+    if (statusCode === 422) {
       return {
         success: false,
         error: "Invalid merge request or pull request already merged",
-        statusCode: 422,
+        statusCode,
       };
     }
-    if (httpError.status === 403) {
+    if (statusCode === 403) {
       return {
         success: false,
         error: "Permission denied",
-        statusCode: 403,
+        statusCode,
       };
     }
 

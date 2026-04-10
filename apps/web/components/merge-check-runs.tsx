@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  CircleDotDashed,
   List,
   ArrowUpDown,
   Loader2,
@@ -150,9 +151,9 @@ function CheckStateIcon({
   }
   if (state === "pending") {
     return (
-      <Loader2
+      <CircleDotDashed
         className={cn(
-          "h-4 w-4 shrink-0 animate-spin text-amber-600 dark:text-amber-500",
+          "h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500",
           className,
         )}
       />
@@ -262,6 +263,8 @@ interface CheckRunsListProps {
   isRefreshing?: boolean;
   /** True on initial load before any data arrives */
   isLoading?: boolean;
+  /** Disable the fix action without hiding it */
+  fixChecksDisabled?: boolean;
   /** Called when the user clicks "Fix errors" — receives all failing check runs */
   onFixChecks?: (failedRuns: PullRequestCheckRun[]) => Promise<void> | void;
 }
@@ -272,6 +275,7 @@ export function CheckRunsList({
   onRefresh,
   isRefreshing,
   isLoading,
+  fixChecksDisabled = false,
   onFixChecks,
 }: CheckRunsListProps) {
   const passed =
@@ -364,7 +368,13 @@ export function CheckRunsList({
             {failed > 0 && onFixChecks && (
               <button
                 type="button"
-                className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                disabled={fixChecksDisabled}
+                title={
+                  fixChecksDisabled
+                    ? "Disabled while the agent is working"
+                    : undefined
+                }
                 onClick={() => {
                   onFixChecks(checkRuns.filter((cr) => cr.state === "failed"));
                 }}
