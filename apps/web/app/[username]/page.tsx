@@ -24,6 +24,16 @@ function getSingleSearchParam(
   return null;
 }
 
+function getPublicUsageSocialTitle(title: string): string {
+  const sanitizedTitle = title
+    .replace(/\bwrapped\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/^[\s:|-]+|[\s:|-]+$/g, "")
+    .trim();
+
+  return sanitizedTitle || "Public profile";
+}
+
 export async function generateMetadata({
   params,
   searchParams,
@@ -41,6 +51,7 @@ export async function generateMetadata({
   }
 
   const displayName = profile.user.name?.trim() || profile.user.username;
+  const socialTitle = getPublicUsageSocialTitle(displayName);
   const dateQuery = profile.dateSelection.value
     ? `?date=${encodeURIComponent(profile.dateSelection.value)}`
     : "";
@@ -49,12 +60,12 @@ export async function generateMetadata({
   return {
     title: displayName,
     openGraph: {
-      title: displayName,
+      title: socialTitle,
       images: [`${publicProfilePath}/og${dateQuery}`],
     },
     twitter: {
       card: "summary_large_image",
-      title: displayName,
+      title: socialTitle,
       images: [`${publicProfilePath}/og${dateQuery}`],
     },
   };

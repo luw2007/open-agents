@@ -20,16 +20,6 @@ interface SharedPageProps {
   params: Promise<{ shareId: string }>;
 }
 
-function getSharedPageSocialTitle(title: string | null | undefined): string {
-  const sanitizedTitle = title
-    ?.replace(/\bwrapped\b/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .replace(/^[\s:|-]+|[\s:|-]+$/g, "")
-    .trim();
-
-  return sanitizedTitle || "Shared Chat";
-}
-
 async function resolveSharedModelName(
   userId: string,
   modelId: string | null | undefined,
@@ -57,18 +47,10 @@ export async function generateMetadata({
   const { shareId } = await params;
   const share = await getShareByIdCached(shareId);
   const sharedChat = share ? await getChatById(share.chatId) : null;
-  const socialTitle = getSharedPageSocialTitle(sharedChat?.title);
 
   return {
     title: sharedChat?.title ?? "Shared Chat",
     description: "A shared Open Agents chat.",
-    openGraph: {
-      title: socialTitle,
-    },
-    twitter: {
-      card: "summary_large_image",
-      title: socialTitle,
-    },
   };
 }
 
