@@ -758,6 +758,77 @@ describe("runAgentWorkflow", () => {
     expect(persistedMessage.metadata?.totalMessageCost).toBeCloseTo(0.005, 10);
   });
 
+  test("preserves previously accumulated gateway cost when resuming an assistant message", async () => {
+    const existingTotalMessageCost = 0.0025;
+    const resumedStepCost = 0.001;
+    const expectedTotalMessageCost = existingTotalMessageCost + resumedStepCost;
+
+    agentStreamParts = [
+      {
+        type: "finish-step",
+        finishReason: "stop",
+        rawFinishReason: "provider_stop",
+        usage: agentTotalUsage,
+        providerMetadata: {
+          gateway: { cost: String(resumedStepCost) },
+        },
+      },
+    ];
+    agentProviderMetadata = {
+      gateway: { cost: String(resumedStepCost) },
+    };
+
+    await runAgentWorkflow(
+      makeOptions({
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [{ type: "text", text: "Need your approval" }],
+            metadata: {
+              totalMessageCost: existingTotalMessageCost,
+            },
+          },
+        ],
+      }),
+    );
+
+    const metadataChunks = writtenChunks.filter(
+      (
+        chunk,
+      ): chunk is UIMessageChunk & {
+        type: "message-metadata";
+        messageMetadata: {
+          lastStepCost?: number;
+          totalMessageCost?: number;
+        };
+      } => chunk.type === "message-metadata",
+    );
+
+    expect(metadataChunks.at(-1)?.messageMetadata.lastStepCost).toBe(
+      resumedStepCost,
+    );
+    expect(metadataChunks.at(-1)?.messageMetadata.totalMessageCost).toBeCloseTo(
+      expectedTotalMessageCost,
+      10,
+    );
+
+    const persistCalls = spies.persistAssistantMessage.mock
+      .calls as unknown[][];
+    const persistedMessage = persistCalls.at(-1)?.[1] as {
+      metadata?: {
+        lastStepCost?: number;
+        totalMessageCost?: number;
+      };
+    };
+
+    expect(persistedMessage.metadata?.lastStepCost).toBe(resumedStepCost);
+    expect(persistedMessage.metadata?.totalMessageCost).toBeCloseTo(
+      expectedTotalMessageCost,
+      10,
+    );
+  });
+
   test("omits cost metadata when provider does not report gateway cost", async () => {
     agentStreamParts = [
       {

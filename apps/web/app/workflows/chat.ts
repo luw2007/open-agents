@@ -501,7 +501,6 @@ export async function runAgentWorkflow(options: Options) {
   let wasAborted = false;
   let exhaustedMaxSteps = false;
   let totalUsage: LanguageModelUsage | undefined;
-  let totalCost: number | undefined;
   let finalFinishReason: FinishReason | undefined;
   let streamClosed = false;
   let workflowStatus: WorkflowRunStatus = "completed";
@@ -551,10 +550,6 @@ export async function runAgentWorkflow(options: Options) {
           : result.stepUsage;
       }
 
-      if (result.stepCost !== undefined) {
-        totalCost = (totalCost ?? 0) + result.stepCost;
-      }
-
       const shouldContinue =
         result.finishReason === "tool-calls" &&
         !shouldPauseForToolInteraction(
@@ -581,16 +576,6 @@ export async function runAgentWorkflow(options: Options) {
         metadata: {
           ...pendingAssistantResponse.metadata,
           totalMessageUsage: totalUsage,
-        },
-      };
-    }
-
-    if (totalCost !== undefined) {
-      pendingAssistantResponse = {
-        ...pendingAssistantResponse,
-        metadata: {
-          ...pendingAssistantResponse.metadata,
-          totalMessageCost: totalCost,
         },
       };
     }
