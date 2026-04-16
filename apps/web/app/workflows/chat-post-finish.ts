@@ -4,6 +4,7 @@ import type { WebAgentUIMessage } from "@/app/types";
 import type { AutoCommitResult } from "@/lib/chat/auto-commit-direct";
 import type { AutoCreatePrResult } from "@/lib/chat/auto-pr-direct";
 import {
+  claimChatActiveStreamId,
   compareAndSetChatActiveStreamId,
   createChatMessageIfNotExists,
   touchChat,
@@ -220,6 +221,61 @@ export async function clearActiveStream(
       await delay(ACTIVE_STREAM_CLEAR_RETRY_DELAY_MS);
     }
   }
+}
+
+const ACTIVE_STREAM_CLAIM_MAX_ATTEMPTS = 3;
+const ACTIVE_STREAM_CLAIM_RETRY_DELAY_MS = 50;
+
+/**
+ * First-step self-registration of the workflow's runId onto the chat.
+ *
+ * The HTTP handler that called `start()` also tries to write activeStreamId
+ * via `compareAndSetChatActiveStreamId`, but that write is best-effort: if
+ * the handler is killed (client disconnect → runtime teardown, unhandled
+ * exception, etc.) between `start()` and its CAS, the workflow runs to
+ * completion with activeStreamId never set, and the chat page can't resume.
+ *
+ * Running this as the workflow's first step ties activeStreamId existence to
+ * workflow existence: as long as the workflow is running, the slot is
+ * claimed. Idempotent with the handler's CAS — whichever writes first wins,
+ * the other is a no-op.
+ *
+ * Returns true on claim/owned, false on conflict (someone else owns the
+ * slot, which should never happen in practice because the HTTP handler
+ * returns 409 when it detects a conflict before calling `start()`).
+ */
+export async function claimActiveStream(
+  chatId: string,
+  workflowRunId: string,
+): Promise<boolean> {
+  "use step";
+
+  for (
+    let attempt = 1;
+    attempt <= ACTIVE_STREAM_CLAIM_MAX_ATTEMPTS;
+    attempt++
+  ) {
+    try {
+      const ok = await claimChatActiveStreamId(chatId, workflowRunId);
+      if (!ok) {
+        console.warn(
+          "[workflow] activeStreamId slot owned by a different run:",
+          { chatId, workflowRunId },
+        );
+      }
+      return ok;
+    } catch (error) {
+      if (attempt === ACTIVE_STREAM_CLAIM_MAX_ATTEMPTS) {
+        console.error("[workflow] Failed to claim activeStreamId:", error);
+        // Non-fatal: workflow can still run, just won't be resumable.
+        return false;
+      }
+
+      await delay(ACTIVE_STREAM_CLAIM_RETRY_DELAY_MS);
+    }
+  }
+
+  return false;
 }
 
 function delay(ms: number) {

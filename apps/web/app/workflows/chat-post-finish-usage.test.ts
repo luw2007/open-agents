@@ -46,6 +46,7 @@ const spies = {
 };
 
 mock.module("@/lib/db/sessions", () => ({
+  claimChatActiveStreamId: mock(() => Promise.resolve(true)),
   compareAndSetChatActiveStreamId: mock(() => Promise.resolve(true)),
   createChatMessageIfNotExists: mock(() => Promise.resolve(undefined)),
   touchChat: mock(() => Promise.resolve()),

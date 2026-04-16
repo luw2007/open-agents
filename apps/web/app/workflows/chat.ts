@@ -20,6 +20,7 @@ import type {
   WebAgentUIMessage,
 } from "@/app/types";
 import {
+  claimActiveStream,
   clearActiveStream,
   hasAutoCommitChangesStep,
   persistAssistantMessage,
@@ -459,6 +460,15 @@ export async function runAgentWorkflow(options: Options) {
   if (latestMessage == null) {
     throw new Error("runAgentWorkflow requires at least one message");
   }
+
+  // Self-register this workflow's runId onto the chat as the very first step.
+  // The HTTP POST handler also writes this (via compareAndSetChatActiveStreamId
+  // after `start()` returns), but that write is best-effort and can be lost
+  // when the client disconnects early and the function is torn down before
+  // it runs. Persisting from inside the workflow guarantees that as long as
+  // the workflow is running, the chat row points at it and the client can
+  // resume on refresh.
+  await claimActiveStream(options.chatId, workflowRunId);
 
   const [modelMessages, assistantId] = await Promise.all([
     convertMessages(options.messages),

@@ -9,6 +9,7 @@ let runStatus: string = "running";
 const spies = {
   persistAssistantMessage: mock(() => Promise.resolve()),
   persistSandboxState: mock(() => Promise.resolve()),
+  claimActiveStream: mock(() => Promise.resolve(true)),
   clearActiveStream: mock(() => Promise.resolve()),
   recordWorkflowUsage: mock(() => Promise.resolve()),
   refreshDiffCache: mock(() => Promise.resolve()),
