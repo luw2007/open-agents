@@ -1,6 +1,6 @@
 import crypto from "crypto";
 
-function getGitLabUrl(): string {
+export function getGitLabUrl(): string {
   const url = process.env.GITLAB_URL;
   if (!url) throw new Error("GITLAB_URL is not set");
   return url.replace(/\/$/, "");
