@@ -5,6 +5,7 @@ import { bashTool } from "../tools/bash";
 import { globTool } from "../tools/glob";
 import { grepTool } from "../tools/grep";
 import { readFileTool } from "../tools/read";
+import { taskCompleteTool } from "../tools/task-complete";
 import { editFileTool, writeFileTool } from "../tools/write";
 import type { SandboxExecutionContext } from "../types";
 import {
@@ -68,6 +69,7 @@ export const executorSubagent = new ToolLoopAgent({
     grep: grepTool(),
     glob: globTool(),
     bash: bashTool(),
+    task_complete: taskCompleteTool,
   },
   stopWhen: stepCountIs(SUBAGENT_STEP_LIMIT),
   callOptionsSchema,
