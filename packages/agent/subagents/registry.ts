@@ -1,4 +1,7 @@
+import { checkSubagent } from "./check";
+import { debugSubagent } from "./debug";
 import { designSubagent } from "./design";
+import { dispatchSubagent } from "./dispatch";
 import { executorSubagent } from "./executor";
 import { explorerSubagent } from "./explorer";
 
@@ -17,6 +20,21 @@ export const SUBAGENT_REGISTRY = {
     shortDescription:
       "Use for creating distinctive, production-grade frontend interfaces with high design quality. Generates creative, polished code that avoids generic AI aesthetics.",
     agent: designSubagent,
+  },
+  check: {
+    shortDescription:
+      "Use for code review and quality assurance. Reviews code against specifications, identifies issues, and fixes them directly. Runs validation commands to ensure quality.",
+    agent: checkSubagent,
+  },
+  debug: {
+    shortDescription:
+      "Use for diagnosing and fixing specific issues. Analyzes error context, traces root causes, implements targeted fixes, and verifies resolutions.",
+    agent: debugSubagent,
+  },
+  dispatch: {
+    shortDescription:
+      "Use for orchestrating multi-agent pipelines. Pure dispatcher that coordinates research → implement → check phases. Does not implement - only delegates to other subagents.",
+    agent: dispatchSubagent,
   },
 } as const;
 
