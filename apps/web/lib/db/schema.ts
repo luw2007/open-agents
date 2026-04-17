@@ -18,7 +18,7 @@ export const users = pgTable(
   {
     id: text("id").primaryKey(),
     provider: text("provider", {
-      enum: ["github", "vercel"],
+      enum: ["github", "vercel", "gitlab"],
     }).notNull(),
     externalId: text("external_id").notNull(),
     accessToken: text("access_token").notNull(),
@@ -374,8 +374,8 @@ export const userPreferences = pgTable("user_preferences", {
   ),
   defaultSubagentModelId: text("default_subagent_model_id"),
   defaultSandboxType: text("default_sandbox_type", {
-    enum: ["vercel"],
-  }).default("vercel"),
+    enum: ["vercel", "srt"],
+  }).default("srt"),
   defaultDiffMode: text("default_diff_mode", {
     enum: ["unified", "split"],
   }).default("unified"),
