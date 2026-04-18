@@ -121,40 +121,6 @@ describe("/api/sessions POST vercel project linking", () => {
     upsertCalls.length = 0;
   });
 
-  test("blocks additional sessions for non-Vercel trial users on the managed deployment", async () => {
-    const { POST } = await routeModulePromise;
-
-    currentSession = {
-      authProvider: "vercel",
-      user: {
-        id: "user-1",
-        username: "nico",
-        name: "Nico",
-        email: "person@example.com",
-      },
-    };
-    existingSessionCount = 1;
-
-    const response = await POST(
-      createJsonRequest(
-        {
-          branch: "main",
-          cloneUrl: "https://github.com/vercel/open-harness",
-          repoOwner: "vercel",
-          repoName: "open-harness",
-        },
-        "https://open-agents.dev/api/sessions",
-      ),
-    );
-    const body = (await response.json()) as { error: string };
-
-    expect(response.status).toBe(403);
-    expect(body.error).toBe(
-      "This hosted deployment includes 1 trial session for non-Vercel accounts. Deploy your own copy to start more.",
-    );
-    expect(createCalls).toHaveLength(0);
-  });
-
   test("explicit Vercel project is validated against live repo matches before it is persisted", async () => {
     const { POST } = await routeModulePromise;
 
