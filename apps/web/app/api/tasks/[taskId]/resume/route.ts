@@ -2,11 +2,10 @@
 // POST /api/tasks/:taskId/resume — 恢复失败/暂停的 task workflow
 import type { SandboxState } from "@open-harness/sandbox";
 import { gateway } from "ai";
-import { start } from "workflow/api";
+import { sendJob, JOB_QUEUES } from "@/lib/workflow";
 import { getServerSession } from "@/lib/session/get-server-session";
 import { getTaskById, updateTask } from "@/lib/db/tasks";
 import { getSessionById } from "@/lib/db/sessions";
-import { runDevTaskWorkflow } from "@/app/workflows/dev-task";
 import { APP_DEFAULT_MODEL_ID } from "@/lib/models";
 
 type RouteContext = { params: Promise<{ taskId: string }> };
@@ -58,8 +57,10 @@ export async function POST(_req: Request, context: RouteContext) {
 
   const model = gateway(APP_DEFAULT_MODEL_ID);
 
-  const run = await start(runDevTaskWorkflow, [
-    {
+  const runId = crypto.randomUUID();
+  await sendJob(JOB_QUEUES.DEV_TASK, {
+    runId,
+    options: {
       taskId: task.id,
       title: task.title,
       slug: task.slug,
@@ -70,10 +71,10 @@ export async function POST(_req: Request, context: RouteContext) {
       verifyCommands: task.verifyCommands ?? undefined,
       model,
     },
-  ]);
+  });
 
   return Response.json({
     task: { ...task, status: "planning" },
-    workflowRunId: run.runId,
+    workflowRunId: runId,
   });
 }

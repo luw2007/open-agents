@@ -16,7 +16,7 @@ import {
 } from "@open-harness/agent/ailoop";
 import type { SandboxState } from "@open-harness/sandbox";
 import { connectSandbox } from "@open-harness/sandbox";
-import { getWorkflowMetadata, getWritable } from "workflow";
+
 import { completeNodeRun, createNodeRun, updateTask } from "@/lib/db/tasks";
 
 /** 最大 verify → check 循环次数 */
@@ -40,7 +40,6 @@ async function emitEvent(
   writable: WritableStream<TaskStreamEvent>,
   event: TaskStreamEvent,
 ) {
-  "use step";
   const writer = writable.getWriter();
   try {
     await writer.write(event);
@@ -53,7 +52,6 @@ async function runPlanStep(
   options: DevTaskOptions,
   model: LanguageModel,
 ): Promise<AgentNodeOutput> {
-  "use step";
   const sandbox = await connectSandbox(options.sandboxState);
   const context = await loadTaskContext(sandbox, "plan", options.slug);
   const prompt = buildPlanPrompt(
@@ -74,7 +72,6 @@ async function runImplementStep(
   plan: AgentNodeOutput,
   model: LanguageModel,
 ): Promise<AgentNodeOutput> {
-  "use step";
   const sandbox = await connectSandbox(options.sandboxState);
   const context = await loadTaskContext(sandbox, "implement", options.slug);
   const prompt = buildImplementPrompt(
@@ -96,7 +93,6 @@ async function runVerifyStep(
   workingDirectory: string,
   commands?: string[],
 ): Promise<VerifyResult> {
-  "use step";
   return runVerify(sandboxState, workingDirectory, commands);
 }
 
@@ -107,7 +103,6 @@ async function runCheckStep(
   iteration: number,
   model: LanguageModel,
 ): Promise<AgentNodeOutput> {
-  "use step";
   const sandbox = await connectSandbox(options.sandboxState);
   const context = await loadTaskContext(sandbox, "check", options.slug);
   const prompt = buildCheckPrompt(
@@ -134,7 +129,6 @@ async function persistNodeRun(
   output: AgentNodeOutput | null,
   verifyResult?: VerifyResult,
 ) {
-  "use step";
   const run = await createNodeRun({
     taskId,
     nodeType,
@@ -166,7 +160,6 @@ async function persistTaskStatus(
   phase?: string,
   plan?: string,
 ) {
-  "use step";
   await updateTask(taskId, {
     status,
     currentPhase: phase,
@@ -179,11 +172,11 @@ async function persistTaskStatus(
 
 // ─── 主工作流 ────────────────────────────────────────────────────
 
-export async function runDevTaskWorkflow(options: DevTaskOptions) {
-  "use workflow";
-
-  const { workflowRunId } = getWorkflowMetadata();
-  const writable = getWritable<TaskStreamEvent>();
+export async function runDevTaskWorkflow(
+  options: DevTaskOptions,
+  workflowRunId: string,
+  writable: WritableStream<TaskStreamEvent>,
+) {
   const { taskId, model } = options;
 
   // 记录 workflowRunId

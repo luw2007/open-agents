@@ -1,4 +1,4 @@
-import { getRun } from "workflow/api";
+import { cancelJob } from "@/lib/workflow";
 import {
   requireAuthenticatedUser,
   requireOwnedChatById,
@@ -48,8 +48,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    const run = getRun(chat.activeStreamId);
-    await run.cancel();
+    await cancelJob(chat.activeStreamId);
   } catch (error) {
     console.error(
       `[workflow] Failed to cancel workflow run for chat ${chatId}:`,

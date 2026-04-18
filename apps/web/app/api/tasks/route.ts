@@ -3,13 +3,12 @@
 // POST /api/tasks — 创建新 task 并启动 workflow
 import type { SandboxState } from "@open-harness/sandbox";
 import { gateway } from "ai";
-import { start } from "workflow/api";
+import { sendJob, JOB_QUEUES } from "@/lib/workflow";
 import { getServerSession } from "@/lib/session/get-server-session";
 import { createTask, getTasksByUserId } from "@/lib/db/tasks";
 import { getSessionById } from "@/lib/db/sessions";
 import { isDevTasksEnabled } from "@/lib/feature-flags";
 import { APP_DEFAULT_MODEL_ID } from "@/lib/models";
-import { runDevTaskWorkflow } from "@/app/workflows/dev-task";
 import { slugify } from "@/lib/utils/slugify";
 
 export async function GET() {
@@ -85,8 +84,10 @@ export async function POST(req: Request) {
   const model = gateway(APP_DEFAULT_MODEL_ID);
 
   // 启动 workflow
-  const run = await start(runDevTaskWorkflow, [
-    {
+  const runId = crypto.randomUUID();
+  await sendJob(JOB_QUEUES.DEV_TASK, {
+    runId,
+    options: {
       taskId: task.id,
       title: task.title,
       slug: task.slug,
@@ -97,7 +98,7 @@ export async function POST(req: Request) {
       verifyCommands: body.verifyCommands,
       model,
     },
-  ]);
+  });
 
-  return Response.json({ task, workflowRunId: run.runId }, { status: 201 });
+  return Response.json({ task, workflowRunId: runId }, { status: 201 });
 }

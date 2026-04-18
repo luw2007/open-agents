@@ -1,12 +1,12 @@
 import "server-only";
 
-import { start } from "workflow/api";
-import { sandboxLifecycleWorkflow } from "@/app/workflows/sandbox-lifecycle";
 import {
   claimSessionLifecycleRunId,
   getSessionById,
   updateSession,
 } from "@/lib/db/sessions";
+import { getBoss } from "@/lib/workflow/boss";
+import { JOB_QUEUES } from "@/lib/workflow/types";
 import { SANDBOX_LIFECYCLE_STALE_RUN_GRACE_MS } from "./config";
 import {
   evaluateSandboxLifecycle,
@@ -27,17 +27,18 @@ async function startLifecycleRun(
   runId: string,
 ) {
   try {
-    const run = await start(sandboxLifecycleWorkflow, [
-      sessionId,
-      reason,
-      runId,
-    ]);
+    const boss = await getBoss();
+    const jobId = await boss.send(
+      JOB_QUEUES.SANDBOX_LIFECYCLE,
+      { runId, sessionId, reason },
+      { singletonKey: `lifecycle:${sessionId}` },
+    );
     console.log(
-      `[Lifecycle] Started workflow run ${run.runId} for session ${sessionId} (reason=${reason}, lease=${runId}).`,
+      `[Lifecycle] Enqueued job ${jobId} for session ${sessionId} (reason=${reason}, lease=${runId}).`,
     );
   } catch (error) {
     console.error(
-      `[Lifecycle] Failed to start workflow run for session ${sessionId}; using inline fallback:`,
+      `[Lifecycle] Failed to enqueue job for session ${sessionId}; using inline fallback:`,
       error,
     );
     const current = await getSessionById(sessionId);

@@ -1,4 +1,4 @@
-import { getRun } from "workflow/api";
+import { getJobStatus } from "@/lib/workflow";
 import {
   requireAuthenticatedUser,
   requireOwnedSessionChat,
@@ -49,8 +49,7 @@ export async function DELETE(req: Request, context: RouteContext) {
     // without cleaning up (e.g. due to a failure), clear the stale ID
     // and allow the delete to proceed.
     try {
-      const run = getRun(chat.activeStreamId);
-      const status = await run.status;
+      const status = await getJobStatus(chat.activeStreamId);
       if (status === "running" || status === "pending") {
         return Response.json(
           { error: "Cannot delete messages while a response is streaming" },

@@ -1,5 +1,5 @@
 import { createUIMessageStreamResponse, type InferUIMessageChunk } from "ai";
-import { getRun } from "workflow/api";
+import { getJobStatus, subscribeJobStream } from "@/lib/workflow";
 import {
   requireAuthenticatedUser,
   requireOwnedChatById,
@@ -40,8 +40,7 @@ export async function GET(_request: Request, context: RouteContext) {
   const runId = chat.activeStreamId;
 
   try {
-    const run = getRun(runId);
-    const status = await run.status;
+    const status = await getJobStatus(runId);
 
     if (
       status === "completed" ||
@@ -54,7 +53,7 @@ export async function GET(_request: Request, context: RouteContext) {
     }
 
     const stream = createCancelableReadableStream(
-      run.getReadable<WebAgentUIMessageChunk>(),
+      subscribeJobStream<WebAgentUIMessageChunk>(runId),
     );
 
     return createUIMessageStreamResponse({ stream });

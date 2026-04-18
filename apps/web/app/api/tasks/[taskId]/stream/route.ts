@@ -1,7 +1,7 @@
 // apps/web/app/api/tasks/[taskId]/stream/route.ts
 // GET /api/tasks/:taskId/stream — SSE 事件流（连接到 workflow run）
 import type { TaskStreamEvent } from "@open-harness/agent/ailoop";
-import { getRun } from "workflow/api";
+import { subscribeJobStream } from "@/lib/workflow";
 import { getServerSession } from "@/lib/session/get-server-session";
 import { getTaskById } from "@/lib/db/tasks";
 
@@ -30,14 +30,13 @@ export async function GET(_req: Request, context: RouteContext) {
     );
   }
 
-  // 连接到 durable workflow run 的可读流
-  const run = getRun<TaskStreamEvent>(task.workflowRunId);
+  // 连接到 job 的可读流
+  const readable = subscribeJobStream<TaskStreamEvent>(task.workflowRunId);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        const readable = run.getReadable<TaskStreamEvent>();
         const reader = readable.getReader();
         let done = false;
         while (!done) {

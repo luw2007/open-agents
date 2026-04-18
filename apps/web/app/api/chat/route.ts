@@ -1,7 +1,13 @@
 import { checkBotId } from "botid/server";
 import { createUIMessageStreamResponse, type InferUIMessageChunk } from "ai";
 import { botIdConfig } from "@/lib/botid";
-import { start } from "workflow/api";
+import {
+  sendJob,
+  getJobStatus,
+  cancelJob,
+  subscribeJobStream,
+  JOB_QUEUES,
+} from "@/lib/workflow";
 import type { WebAgentUIMessage } from "@/app/types";
 import {
   compareAndSetChatActiveStreamId,
@@ -37,7 +43,6 @@ import {
 import { resolveChatModelSelection } from "./_lib/model-selection";
 import { parseChatRequestBody, requireChatIdentifiers } from "./_lib/request";
 import { createChatRuntime } from "./_lib/runtime";
-import { runAgentWorkflow } from "@/app/workflows/chat";
 import { persistAssistantMessagesWithToolResults } from "./_lib/persist-tool-results";
 
 export const maxDuration = 800;
@@ -222,8 +227,10 @@ export async function POST(req: Request) {
     (sessionRecord.autoCreatePrOverride ?? preferences?.autoCreatePr ?? false);
 
   // Start the durable workflow
-  const run = await start(runAgentWorkflow, [
-    {
+  const runId = crypto.randomUUID();
+  await sendJob(JOB_QUEUES.CHAT_AGENT, {
+    runId,
+    options: {
       messages,
       chatId,
       sessionId,
@@ -255,21 +262,16 @@ export async function POST(req: Request) {
           repoName: sessionRecord.repoName,
         }),
     },
-  ]);
+  });
 
   // Atomically claim the activeStreamId slot. If another request raced us and
   // already set it, cancel the workflow we just started and reconnect instead.
-  const claimed = await compareAndSetChatActiveStreamId(
-    chatId,
-    null,
-    run.runId,
-  );
+  const claimed = await compareAndSetChatActiveStreamId(chatId, null, runId);
 
   if (!claimed) {
     // Another request won the race — cancel our duplicate workflow.
     try {
-      const { getRun } = await import("workflow/api");
-      getRun(run.runId).cancel();
+      await cancelJob(runId);
     } catch {
       // Best-effort cleanup.
     }
@@ -280,13 +282,13 @@ export async function POST(req: Request) {
   }
 
   const stream = createCancelableReadableStream(
-    run.getReadable<WebAgentUIMessageChunk>(),
+    subscribeJobStream<WebAgentUIMessageChunk>(runId),
   );
 
   return createUIMessageStreamResponse({
     stream,
     headers: {
-      "x-workflow-run-id": run.runId,
+      "x-workflow-run-id": runId,
     },
   });
 }
@@ -310,7 +312,6 @@ async function reconcileExistingActiveStream(
   chatId: string,
   activeStreamId: string,
 ): Promise<ExistingActiveStreamResolution> {
-  const { getRun } = await import("workflow/api");
   let currentStreamId: string | null = activeStreamId;
 
   for (
@@ -319,14 +320,13 @@ async function reconcileExistingActiveStream(
     attempt++
   ) {
     try {
-      const existingRun = getRun(currentStreamId);
-      const status = await existingRun.status;
+      const status = await getJobStatus(currentStreamId);
       if (status === "running" || status === "pending") {
         return {
           action: "resume",
           runId: currentStreamId,
           stream: createCancelableReadableStream(
-            existingRun.getReadable<WebAgentUIMessageChunk>(),
+            subscribeJobStream<WebAgentUIMessageChunk>(currentStreamId),
           ),
         };
       }

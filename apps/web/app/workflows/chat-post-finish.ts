@@ -86,8 +86,6 @@ export async function persistUserMessage(
   chatId: string,
   message: WebAgentUIMessage,
 ): Promise<void> {
-  "use step";
-
   if (message.role !== "user") {
     return;
   }
@@ -135,8 +133,6 @@ export async function persistAssistantMessage(
   chatId: string,
   message: WebAgentUIMessage,
 ): Promise<void> {
-  "use step";
-
   try {
     const dedupedMessage = dedupeMessageReasoning(message);
     const result = await upsertChatMessageScoped({
@@ -161,8 +157,6 @@ export async function persistAssistantMessage(
 export async function refreshLifecycleActivity(
   sessionId: string,
 ): Promise<void> {
-  "use step";
-
   try {
     await updateSession(sessionId, buildLifecycleActivityUpdate(new Date()));
   } catch (error) {
@@ -174,7 +168,6 @@ export async function persistSandboxState(
   sessionId: string,
   sandboxState: SandboxState,
 ): Promise<void> {
-  "use step";
   try {
     const { connectSandbox } = await import("@open-harness/sandbox");
     const sandbox = await connectSandbox(sandboxState);
@@ -199,8 +192,6 @@ export async function clearActiveStream(
   chatId: string,
   workflowRunId: string,
 ): Promise<void> {
-  "use step";
-
   for (
     let attempt = 1;
     attempt <= ACTIVE_STREAM_CLEAR_MAX_ATTEMPTS;
@@ -245,8 +236,6 @@ export async function recordWorkflowUsage(
     stepTimings: WorkflowRunStepTiming[];
   },
 ): Promise<void> {
-  "use step";
-
   try {
     const { collectTaskToolUsageEvents, sumLanguageModelUsage } =
       await import("@open-harness/agent");
@@ -350,7 +339,6 @@ export async function refreshDiffCache(
   sessionId: string,
   sandboxState: SandboxState,
 ): Promise<void> {
-  "use step";
   try {
     const { connectSandbox } = await import("@open-harness/sandbox");
     const { computeAndCacheDiff } = await import("@/lib/diff/compute-diff");
@@ -364,7 +352,6 @@ export async function refreshDiffCache(
 export async function hasAutoCommitChangesStep(params: {
   sandboxState: SandboxState;
 }): Promise<boolean> {
-  "use step";
   try {
     const { connectSandbox } = await import("@open-harness/sandbox");
     const sandbox: Sandbox = await connectSandbox(params.sandboxState);
@@ -393,7 +380,6 @@ export async function runAutoCommitStep(params: {
   repoName: string;
   sandboxState: SandboxState;
 }): Promise<AutoCommitResult> {
-  "use step";
   try {
     const { connectSandbox } = await import("@open-harness/sandbox");
     const { performAutoCommit } = await import("@/lib/chat/auto-commit-direct");
@@ -424,7 +410,6 @@ export async function runAutoCreatePrStep(params: {
   repoName: string;
   sandboxState: SandboxState;
 }): Promise<AutoCreatePrResult> {
-  "use step";
   try {
     const { connectSandbox } = await import("@open-harness/sandbox");
     const { performAutoCreatePr } = await import("@/lib/chat/auto-pr-direct");

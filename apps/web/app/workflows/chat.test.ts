@@ -87,24 +87,20 @@ function buildAgentSteps() {
 
 // ── Module mocks ───────────────────────────────────────────────────
 
-mock.module("workflow", () => ({
-  getWorkflowMetadata: () => ({ workflowRunId: "wrun_test-123" }),
-  getWritable: () => {
-    const writable = new WritableStream<UIMessageChunk>({
-      write(chunk) {
-        writtenChunks.push(chunk);
-      },
-    });
-    return writable;
-  },
-}));
+// pg-boss 迁移后不再需要 mock "workflow" 和 "workflow/api"
+// runAgentWorkflow 的 workflowRunId 和 writable 由调用方传入
+const TEST_RUN_ID = "wrun_test-123";
 
-mock.module("workflow/api", () => ({
-  getRun: () => ({
-    get status() {
-      return Promise.resolve(runStatus);
+function testWritable(): WritableStream<UIMessageChunk> {
+  return new WritableStream<UIMessageChunk>({
+    write(chunk) {
+      writtenChunks.push(chunk);
     },
-  }),
+  });
+}
+
+mock.module("@/lib/workflow/job-manager", () => ({
+  getJobStatus: () => Promise.resolve(runStatus),
 }));
 
 mock.module("./chat-post-finish", () => spies);
@@ -227,7 +223,12 @@ mock.module("ai", () => ({
 
 mock.module("@open-harness/agent", () => ({}));
 
-const { runAgentWorkflow } = await import("./chat");
+const { runAgentWorkflow: _runAgentWorkflow } = await import("./chat");
+
+/** 测试用包装：自动注入 workflowRunId 和 writable */
+async function runWorkflow(options: Parameters<typeof _runAgentWorkflow>[0]) {
+  return _runAgentWorkflow(options, TEST_RUN_ID, testWritable());
+}
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -250,7 +251,7 @@ function makeOptions(overrides?: Record<string, unknown>) {
     },
     maxSteps: 1,
     ...overrides,
-  } as Parameters<typeof runAgentWorkflow>[0];
+  } as Parameters<typeof _runAgentWorkflow>[0];
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -277,7 +278,7 @@ beforeEach(() => {
 describe("runAgentWorkflow", () => {
   test("throws when no messages provided", async () => {
     try {
-      await runAgentWorkflow(makeOptions({ messages: [] }));
+      await runWorkflow(makeOptions({ messages: [] }));
       expect(true).toBe(false);
     } catch (error) {
       expect((error as Error).message).toContain("at least one message");
@@ -285,7 +286,7 @@ describe("runAgentWorkflow", () => {
   });
 
   test("sends start and finish chunks to writable", async () => {
-    await runAgentWorkflow(makeOptions());
+    await runWorkflow(makeOptions());
 
     const types = writtenChunks.map((c) => c.type);
     expect(types[0]).toBe("start");
@@ -293,7 +294,7 @@ describe("runAgentWorkflow", () => {
   });
 
   test("persists assistant message after run", async () => {
-    await runAgentWorkflow(makeOptions());
+    await runWorkflow(makeOptions());
 
     expect(spies.persistAssistantMessage).toHaveBeenCalledTimes(1);
     const paCalls = spies.persistAssistantMessage.mock.calls as unknown[][];
@@ -301,7 +302,7 @@ describe("runAgentWorkflow", () => {
   });
 
   test("records usage after run", async () => {
-    await runAgentWorkflow(makeOptions());
+    await runWorkflow(makeOptions());
 
     expect(spies.recordWorkflowUsage).toHaveBeenCalledTimes(1);
     const rwCalls = spies.recordWorkflowUsage.mock.calls as unknown[][];
@@ -310,7 +311,7 @@ describe("runAgentWorkflow", () => {
   });
 
   test("persists model metadata even without a finish-step chunk", async () => {
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         selectedModelId: "variant:builtin:gpt-5.4-xhigh",
         modelId: "openai/gpt-5.4",
@@ -342,7 +343,7 @@ describe("runAgentWorkflow", () => {
       },
     ];
 
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         selectedModelId: "variant:builtin:gpt-5.4-xhigh",
         modelId: "openai/gpt-5.4",
@@ -391,7 +392,7 @@ describe("runAgentWorkflow", () => {
       },
     ];
 
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         messages: [
           {
@@ -428,7 +429,7 @@ describe("runAgentWorkflow", () => {
     agentFinishReason = "tool-calls";
     agentRawFinishReason = "provider_tool_use";
 
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         maxSteps: 2,
       }),
@@ -521,7 +522,7 @@ describe("runAgentWorkflow", () => {
     };
 
     try {
-      await runAgentWorkflow(makeOptions());
+      await runWorkflow(makeOptions());
 
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toHaveLength(1);
@@ -599,7 +600,7 @@ describe("runAgentWorkflow", () => {
       },
     ];
 
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         maxSteps: 2,
       }),
@@ -645,7 +646,7 @@ describe("runAgentWorkflow", () => {
       },
     ];
 
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         maxSteps: 2,
       }),
@@ -709,20 +710,20 @@ describe("runAgentWorkflow", () => {
       callOrder.push("clear-stream");
     });
 
-    await runAgentWorkflow(makeOptions());
+    await runWorkflow(makeOptions());
 
     expect(spies.refreshLifecycleActivity).toHaveBeenCalledTimes(1);
     expect(callOrder).toEqual(["refresh-lifecycle", "clear-stream"]);
   });
 
   test("persists sandbox state when sandbox is present", async () => {
-    await runAgentWorkflow(makeOptions());
+    await runWorkflow(makeOptions());
 
     expect(spies.persistSandboxState).toHaveBeenCalledTimes(1);
   });
 
   test("skips sandbox state when no sandbox", async () => {
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         agentOptions: {},
       }),
@@ -732,7 +733,7 @@ describe("runAgentWorkflow", () => {
   });
 
   test("clears active stream in finally block", async () => {
-    await runAgentWorkflow(makeOptions());
+    await runWorkflow(makeOptions());
 
     expect(spies.clearActiveStream).toHaveBeenCalledWith(
       "chat-1",
@@ -741,13 +742,13 @@ describe("runAgentWorkflow", () => {
   });
 
   test("refreshes diff cache after run", async () => {
-    await runAgentWorkflow(makeOptions());
+    await runWorkflow(makeOptions());
 
     expect(spies.refreshDiffCache).toHaveBeenCalledTimes(1);
   });
 
   test("runs auto-commit when enabled and not aborted", async () => {
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         autoCommitEnabled: true,
         sessionTitle: "My session",
@@ -767,7 +768,7 @@ describe("runAgentWorkflow", () => {
   });
 
   test("runs auto PR creation when enabled and not aborted", async () => {
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         autoCommitEnabled: true,
         autoCreatePrEnabled: true,
@@ -792,7 +793,7 @@ describe("runAgentWorkflow", () => {
       Promise.resolve(false),
     );
 
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         autoCommitEnabled: true,
         autoCreatePrEnabled: true,
@@ -827,7 +828,7 @@ describe("runAgentWorkflow", () => {
       }),
     );
 
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         autoCommitEnabled: true,
         autoCreatePrEnabled: true,
@@ -912,7 +913,7 @@ describe("runAgentWorkflow", () => {
   });
 
   test("prunes synthetic git-only assistant messages before the next model call", async () => {
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         messages: [
           {
@@ -962,7 +963,7 @@ describe("runAgentWorkflow", () => {
       }),
     );
 
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         autoCommitEnabled: true,
         autoCreatePrEnabled: true,
@@ -987,7 +988,7 @@ describe("runAgentWorkflow", () => {
       },
     ];
 
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         messages: [
           {
@@ -1014,7 +1015,7 @@ describe("runAgentWorkflow", () => {
   });
 
   test("skips auto PR creation when not enabled", async () => {
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         autoCommitEnabled: true,
         autoCreatePrEnabled: false,
@@ -1027,7 +1028,7 @@ describe("runAgentWorkflow", () => {
   });
 
   test("skips auto-commit when not enabled", async () => {
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         autoCommitEnabled: false,
         repoOwner: "acme",
@@ -1039,7 +1040,7 @@ describe("runAgentWorkflow", () => {
   });
 
   test("skips auto-commit when repoOwner is missing", async () => {
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         autoCommitEnabled: true,
         repoOwner: undefined,
@@ -1051,7 +1052,7 @@ describe("runAgentWorkflow", () => {
   });
 
   test("skips auto-commit when repoName is missing", async () => {
-    await runAgentWorkflow(
+    await runWorkflow(
       makeOptions({
         autoCommitEnabled: true,
         repoOwner: "acme",
@@ -1077,7 +1078,7 @@ describe("runAgentWorkflow", () => {
     const { runAgentWorkflow: reloadedRun } = await import("./chat");
 
     try {
-      await reloadedRun(makeOptions());
+      await reloadedRun(makeOptions(), TEST_RUN_ID, testWritable());
     } catch {
       // Expected to throw
     }

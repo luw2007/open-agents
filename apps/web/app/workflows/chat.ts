@@ -9,8 +9,7 @@ import {
   type UIMessageChunk,
 } from "ai";
 import type { OpenHarnessAgentCallOptions } from "@open-harness/agent";
-import { getWorkflowMetadata, getWritable } from "workflow";
-import { getRun } from "workflow/api";
+import { getJobStatus } from "@/lib/workflow/job-manager";
 import { addLanguageModelUsage } from "./usage-utils";
 import type {
   WebAgentCommitData,
@@ -69,7 +68,6 @@ const shouldPauseForToolInteraction = (parts: WebAgentUIMessage["parts"]) =>
 const convertMessages = async (
   messages: WebAgentUIMessage[],
 ): Promise<ModelMessage[]> => {
-  "use step";
   const { webAgent } = await import("@/app/config");
   const dedupedMessages = messages.map(dedupeMessageReasoning);
   const modelMessages = await convertToModelMessages<WebAgentUIMessage>(
@@ -97,7 +95,6 @@ const convertMessages = async (
 };
 
 const generateId = async () => {
-  "use step";
   return generateIdAi();
 };
 
@@ -439,7 +436,6 @@ async function sendDataPart(
         data: WebAgentPrData;
       },
 ) {
-  "use step";
   const writer = writable.getWriter();
   try {
     await writer.write(part);
@@ -448,12 +444,11 @@ async function sendDataPart(
   }
 }
 
-export async function runAgentWorkflow(options: Options) {
-  "use workflow";
-
-  const { workflowRunId } = getWorkflowMetadata();
-  const writable = getWritable<UIMessageChunk>();
-
+export async function runAgentWorkflow(
+  options: Options,
+  workflowRunId: string,
+  writable: WritableStream<UIMessageChunk>,
+) {
   const latestMessage = options.messages.at(-1);
 
   if (latestMessage == null) {
@@ -786,8 +781,6 @@ const runAgentStep = async (
   agentOptions: OpenHarnessAgentCallOptions,
   stepNumber: number,
 ) => {
-  "use step";
-
   const stepStartedAt = new Date();
   const { webAgent } = await import("@/app/config");
 
@@ -1009,28 +1002,16 @@ function startStopMonitor(runId: string, abortController: AbortController) {
   let shouldStop = false;
 
   const done = (async () => {
-    const run = getRun(runId);
-
     while (!shouldStop && !abortController.signal.aborted) {
-      let runStatus:
-        | "pending"
-        | "running"
-        | "completed"
-        | "failed"
-        | "cancelled";
-
       try {
-        runStatus = await run.status;
+        const status = await getJobStatus(runId);
+        if (status === "cancelled") {
+          abortController.abort();
+          return;
+        }
       } catch {
-        await delay(150);
-        continue;
+        // ignore
       }
-
-      if (runStatus === "cancelled") {
-        abortController.abort();
-        return;
-      }
-
       await delay(150);
     }
   })();
@@ -1054,7 +1035,6 @@ function isAbortError(error: unknown) {
 }
 
 async function sendStart(writable: Writable, messageId: string) {
-  "use step";
   const writer = writable.getWriter();
   try {
     await writer.write({ type: "start", messageId });
@@ -1064,7 +1044,6 @@ async function sendStart(writable: Writable, messageId: string) {
 }
 
 async function sendFinish(writable: Writable) {
-  "use step";
   const writer = writable.getWriter();
   try {
     await writer.write({ type: "finish", finishReason: "stop" });
@@ -1074,6 +1053,5 @@ async function sendFinish(writable: Writable) {
 }
 
 async function closeStream(writable: Writable) {
-  "use step";
   await writable.close();
 }
