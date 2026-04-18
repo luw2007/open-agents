@@ -27,7 +27,7 @@ export function CreateTaskForm({ sessionId }: CreateTaskFormProps) {
     const formData = new FormData(e.currentTarget);
     const title = formData.get("title") as string;
     const prd = formData.get("prd") as string;
-    const priority = formData.get("priority") as string || "P2";
+    const priority = (formData.get("priority") as string) || "P2";
 
     try {
       const res = await fetch("/api/tasks", {
@@ -92,9 +92,7 @@ export function CreateTaskForm({ sessionId }: CreateTaskFormProps) {
               <option value="P3">P3 — 低</option>
             </select>
           </div>
-          {error && (
-            <p className="text-sm text-destructive">{error}</p>
-          )}
+          {error && <p className="text-sm text-destructive">{error}</p>}
           <Button type="submit" disabled={isSubmitting} className="w-full">
             {isSubmitting && <Loader2 className="size-4 animate-spin" />}
             {isSubmitting ? "创建中..." : "创建任务"}

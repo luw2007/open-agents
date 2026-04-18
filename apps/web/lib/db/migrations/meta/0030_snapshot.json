@@ -1,6 +1,6 @@
 {
-  "id": "b3779a01-e217-43d2-94ba-2e46fa4e36d1",
-  "prevId": "bd4e8f58-7708-4bd8-91e6-99cc595639df",
+  "id": "d634b72d-8957-4ea0-8797-3df3792aa49f",
+  "prevId": "b3779a01-e217-43d2-94ba-2e46fa4e36d1",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1307,7 +1307,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false,
-          "default": "'vercel'"
+          "default": "'srt'"
         },
         "default_diff_mode": {
           "name": "default_diff_mode",

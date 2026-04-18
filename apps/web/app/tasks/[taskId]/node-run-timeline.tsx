@@ -1,12 +1,7 @@
 // apps/web/app/tasks/[taskId]/node-run-timeline.tsx
 "use client";
 
-import {
-  CheckCircle2,
-  Clock,
-  Loader2,
-  XCircle,
-} from "lucide-react";
+import { CheckCircle2, Clock, Loader2, XCircle } from "lucide-react";
 import type { TaskNodeRun } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -59,7 +54,10 @@ export function NodeRunTimeline({ runs }: NodeRunTimelineProps) {
                     {run.iteration > 0 && ` #${run.iteration + 1}`}
                   </span>
                   <span className="text-xs text-muted-foreground">
-                    {formatDuration(new Date(run.startedAt), run.completedAt ? new Date(run.completedAt) : null)}
+                    {formatDuration(
+                      new Date(run.startedAt),
+                      run.completedAt ? new Date(run.completedAt) : null,
+                    )}
                   </span>
                   {run.toolCallCount !== null && run.toolCallCount > 0 && (
                     <span className="text-xs text-muted-foreground">
@@ -73,13 +71,18 @@ export function NodeRunTimeline({ runs }: NodeRunTimelineProps) {
                   </p>
                 )}
                 {run.verifyResult && (
-                  <div className={cn(
-                    "mt-1 rounded-md p-2 text-xs",
-                    (run.verifyResult as { passed: boolean }).passed
-                      ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300"
-                      : "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
-                  )}>
-                    验证{(run.verifyResult as { passed: boolean }).passed ? "通过" : "失败"}
+                  <div
+                    className={cn(
+                      "mt-1 rounded-md p-2 text-xs",
+                      (run.verifyResult as { passed: boolean }).passed
+                        ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300"
+                        : "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
+                    )}
+                  >
+                    验证
+                    {(run.verifyResult as { passed: boolean }).passed
+                      ? "通过"
+                      : "失败"}
                   </div>
                 )}
               </div>

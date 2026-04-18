@@ -29,7 +29,9 @@ export async function loadTaskContext(
 ): Promise<LoadedContext> {
   const taskDir = `.ailoop/tasks/${taskSlug}`;
   const phaseJsonl = await readSafe(sandbox, `${taskDir}/${phase}.jsonl`);
-  const fallbackJsonl = phaseJsonl ? null : await readSafe(sandbox, `${taskDir}/spec.jsonl`);
+  const fallbackJsonl = phaseJsonl
+    ? null
+    : await readSafe(sandbox, `${taskDir}/spec.jsonl`);
   const raw = phaseJsonl || fallbackJsonl;
 
   if (!raw?.trim()) return { phase, files: [], markdown: "" };
@@ -46,7 +48,11 @@ export function parseContextEntries(
     .split("\n")
     .filter(Boolean)
     .flatMap((line) => {
-      try { return [JSON.parse(line)]; } catch { return []; }
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
     });
 }
 
@@ -72,9 +78,10 @@ async function buildFromJsonl(
         const path = `${entry.path}/${f.name}`;
         const content = await readSafe(sandbox, path);
         if (content) {
-          const truncated = content.length > MAX_FILE_CHARS
-            ? `${content.slice(0, MAX_FILE_CHARS)}\n... (truncated, ${content.length} chars total)`
-            : content;
+          const truncated =
+            content.length > MAX_FILE_CHARS
+              ? `${content.slice(0, MAX_FILE_CHARS)}\n... (truncated, ${content.length} chars total)`
+              : content;
           files.push({ path, content: truncated, reason: entry.reason });
           totalChars += truncated.length;
         }
@@ -82,22 +89,32 @@ async function buildFromJsonl(
     } else {
       const content = await readSafe(sandbox, entry.path);
       if (content) {
-        const truncated = content.length > MAX_FILE_CHARS
-          ? `${content.slice(0, MAX_FILE_CHARS)}\n... (truncated, ${content.length} chars total)`
-          : content;
-        files.push({ path: entry.path, content: truncated, reason: entry.reason });
+        const truncated =
+          content.length > MAX_FILE_CHARS
+            ? `${content.slice(0, MAX_FILE_CHARS)}\n... (truncated, ${content.length} chars total)`
+            : content;
+        files.push({
+          path: entry.path,
+          content: truncated,
+          reason: entry.reason,
+        });
         totalChars += truncated.length;
       }
     }
   }
 
   const markdown = files.length
-    ? files.map((f) => `### ${f.path}\n> ${f.reason}\n\n${f.content}`).join("\n\n---\n\n")
+    ? files
+        .map((f) => `### ${f.path}\n> ${f.reason}\n\n${f.content}`)
+        .join("\n\n---\n\n")
     : "";
 
   return { phase, files, markdown };
 }
 
-async function readSafe(sandbox: Sandbox, path: string): Promise<string | null> {
+async function readSafe(
+  sandbox: Sandbox,
+  path: string,
+): Promise<string | null> {
   return sandbox.readFile(path, "utf-8").catch(() => null);
 }

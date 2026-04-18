@@ -81,7 +81,12 @@ export async function runAgentNode(
       }
     : {
         status: "completed",
-        summary: extractText((await result.response).messages.findLast((m) => m.role === "assistant")?.content) ?? "(no summary)",
+        summary:
+          extractText(
+            (await result.response).messages.findLast(
+              (m) => m.role === "assistant",
+            )?.content,
+          ) ?? "(no summary)",
         artifacts: {},
         toolCallCount,
         tokenUsage: usage,
@@ -97,11 +102,16 @@ export async function runAgentNode(
  */
 function pickSubagentType(phase: string): keyof typeof SUBAGENT_REGISTRY {
   switch (phase) {
-    case "plan":      return "explorer";
-    case "implement": return "executor";
-    case "check":     return "check";
-    case "debug":     return "debug";
-    default: throw new Error(`Unknown phase: ${phase}`);
+    case "plan":
+      return "explorer";
+    case "implement":
+      return "executor";
+    case "check":
+      return "check";
+    case "debug":
+      return "debug";
+    default:
+      throw new Error(`Unknown phase: ${phase}`);
   }
 }
 
@@ -109,10 +119,12 @@ function extractText(content: unknown): string | null {
   if (!content) return null;
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
-    return content
-      .filter((p) => p.type === "text")
-      .map((p) => p.text)
-      .join("\n") || null;
+    return (
+      content
+        .filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n") || null
+    );
   }
   return null;
 }

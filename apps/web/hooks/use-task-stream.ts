@@ -44,18 +44,17 @@ export function useTaskStream(taskId: string | null): TaskStreamState {
     const source = new EventSource(`/api/tasks/${taskId}/stream`);
     sourceRef.current = source;
 
-    source.onopen = () => {
+    source.addEventListener("open", () => {
       setState((prev) => ({ ...prev, isConnected: true, error: null }));
-    };
+    });
 
-    source.onmessage = (e) => {
+    source.addEventListener("message", (e) => {
       try {
         const event = JSON.parse(e.data) as TaskStreamEvent;
         setState((prev) => {
           const events = [...prev.events, event];
-          const latestPhase = event.type === "node_started"
-            ? event.nodeType
-            : prev.latestPhase;
+          const latestPhase =
+            event.type === "node_started" ? event.nodeType : prev.latestPhase;
           const isCompleted = event.type === "task_completed";
           return { ...prev, events, latestPhase, isCompleted };
         });
@@ -68,16 +67,16 @@ export function useTaskStream(taskId: string | null): TaskStreamState {
       } catch {
         // 忽略无效 JSON
       }
-    };
+    });
 
-    source.onerror = () => {
+    source.addEventListener("error", () => {
       setState((prev) => ({
         ...prev,
         isConnected: false,
         error: "Connection lost",
       }));
       source.close();
-    };
+    });
 
     return cleanup;
   }, [taskId, cleanup]);

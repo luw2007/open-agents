@@ -33,11 +33,16 @@ export function LiveEventFeed({ events, isConnected }: LiveEventFeedProps) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center gap-2 pb-2">
-        {isConnected
-          ? <Radio className="size-4 text-green-500" />
-          : <Loader2 className="size-4 text-muted-foreground" />}
+        {isConnected ? (
+          <Radio className="size-4 text-green-500" />
+        ) : (
+          <Loader2 className="size-4 text-muted-foreground" />
+        )}
         <CardTitle className="text-sm">
-          实时事件 {isConnected && <span className="text-xs text-green-500">(已连接)</span>}
+          实时事件{" "}
+          {isConnected && (
+            <span className="text-xs text-green-500">(已连接)</span>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>

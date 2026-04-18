@@ -17,7 +17,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useTaskStream } from "@/hooks/use-task-stream";
 import { NodeRunTimeline } from "./node-run-timeline";
 import { TaskPhaseIndicator } from "./task-phase-indicator";
-import { VerifyResultPanel } from "./verify-result-panel";
 import { LiveEventFeed } from "./live-event-feed";
 
 interface TaskDetailClientProps {
@@ -25,15 +24,23 @@ interface TaskDetailClientProps {
   initialNodeRuns: TaskNodeRun[];
 }
 
-export function TaskDetailClient({ task, initialNodeRuns }: TaskDetailClientProps) {
-  const isActive = task.status === "planning" || task.status === "implementing" || task.status === "verifying";
+export function TaskDetailClient({
+  task,
+  initialNodeRuns,
+}: TaskDetailClientProps) {
+  const isActive =
+    task.status === "planning" ||
+    task.status === "implementing" ||
+    task.status === "verifying";
   const stream = useTaskStream(isActive ? task.id : null);
   const [isRetrying, setIsRetrying] = useState(false);
 
   async function handleRetry() {
     setIsRetrying(true);
     try {
-      const res = await fetch(`/api/tasks/${task.id}/retry`, { method: "POST" });
+      const res = await fetch(`/api/tasks/${task.id}/retry`, {
+        method: "POST",
+      });
       if (res.ok) {
         window.location.reload();
       }
@@ -57,7 +64,11 @@ export function TaskDetailClient({ task, initialNodeRuns }: TaskDetailClientProp
         </div>
         {(task.status === "failed" || task.status === "paused") && (
           <Button onClick={handleRetry} disabled={isRetrying} size="sm">
-            {isRetrying ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
+            {isRetrying ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Play className="size-4" />
+            )}
             重试
           </Button>
         )}
@@ -96,13 +107,14 @@ export function TaskDetailClient({ task, initialNodeRuns }: TaskDetailClientProp
 
       {/* 实时事件流（仅活跃任务显示） */}
       {isActive && stream.events.length > 0 && (
-        <LiveEventFeed events={stream.events} isConnected={stream.isConnected} />
+        <LiveEventFeed
+          events={stream.events}
+          isConnected={stream.isConnected}
+        />
       )}
 
       {/* 节点执行时间线 */}
-      {initialNodeRuns.length > 0 && (
-        <NodeRunTimeline runs={initialNodeRuns} />
-      )}
+      {initialNodeRuns.length > 0 && <NodeRunTimeline runs={initialNodeRuns} />}
 
       {/* 状态摘要 */}
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -115,7 +127,7 @@ export function TaskDetailClient({ task, initialNodeRuns }: TaskDetailClientProp
         {task.status === "failed" && (
           <>
             <XCircle className="size-4 text-red-500" />
-            <span>任务失败 — 可点击"重试"重新执行</span>
+            <span>任务失败 — 可点击&ldquo;重试&rdquo;重新执行</span>
           </>
         )}
         {isActive && (

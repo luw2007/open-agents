@@ -405,58 +405,89 @@ export type NewUserPreferences = typeof userPreferences.$inferInsert;
 
 // ─── AILoop: 结构化 AI 开发任务 ─────────────────────────────────
 // 任务主表（Session 的子实体，与 chats 并列）
-export const tasks = pgTable("tasks", {
-  id: text("id").primaryKey(),
-  sessionId: text("session_id").references(() => sessions.id).notNull(),
-  userId: text("user_id").notNull(),
-  title: text("title").notNull(),
-  slug: text("slug").notNull(),
-  status: text("status")
-    .$type<"planning" | "implementing" | "verifying" | "completed" | "failed" | "cancelled" | "paused">()
-    .default("planning")
-    .notNull(),
-  currentPhase: text("current_phase"),
-  priority: text("priority").$type<"P0" | "P1" | "P2" | "P3">().default("P2"),
-  prd: text("prd").notNull(),
-  plan: text("plan"),
-  workflowRunId: text("workflow_run_id"),
-  verifyCommands: jsonb("verify_commands").$type<string[]>(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-  completedAt: timestamp("completed_at"),
-}, (t) => [
-  // slug 在同 session 内唯一
-  uniqueIndex("tasks_session_slug_idx").on(t.sessionId, t.slug),
-  // 按 session 查询
-  index("tasks_session_id_idx").on(t.sessionId),
-  // 按 user 查询列表
-  index("tasks_user_id_idx").on(t.userId),
-]);
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .references(() => sessions.id)
+      .notNull(),
+    userId: text("user_id").notNull(),
+    title: text("title").notNull(),
+    slug: text("slug").notNull(),
+    status: text("status")
+      .$type<
+        | "planning"
+        | "implementing"
+        | "verifying"
+        | "completed"
+        | "failed"
+        | "cancelled"
+        | "paused"
+      >()
+      .default("planning")
+      .notNull(),
+    currentPhase: text("current_phase"),
+    priority: text("priority").$type<"P0" | "P1" | "P2" | "P3">().default("P2"),
+    prd: text("prd").notNull(),
+    plan: text("plan"),
+    workflowRunId: text("workflow_run_id"),
+    verifyCommands: jsonb("verify_commands").$type<string[]>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    completedAt: timestamp("completed_at"),
+  },
+  (t) => [
+    // slug 在同 session 内唯一
+    uniqueIndex("tasks_session_slug_idx").on(t.sessionId, t.slug),
+    // 按 session 查询
+    index("tasks_session_id_idx").on(t.sessionId),
+    // 按 user 查询列表
+    index("tasks_user_id_idx").on(t.userId),
+  ],
+);
 
 // 节点执行记录
-export const taskNodeRuns = pgTable("task_node_runs", {
-  id: text("id").primaryKey(),
-  taskId: text("task_id").references(() => tasks.id).notNull(),
-  nodeType: text("node_type")
-    .$type<"plan" | "implement" | "verify" | "check" | "debug" | "finish">()
-    .notNull(),
-  iteration: integer("iteration").default(0).notNull(),
-  status: text("status").$type<"running" | "completed" | "failed">().notNull(),
-  outputSummary: text("output_summary"),
-  toolCallCount: integer("tool_call_count").default(0),
-  tokenUsage: jsonb("token_usage").$type<{ inputTokens: number; outputTokens: number }>(),
-  verifyResult: jsonb("verify_result").$type<{
-    passed: boolean;
-    commands: Array<{ cmd: string; exitCode: number; stdout: string; stderr: string; truncated: boolean }>;
-    durationMs: number;
-  }>(),
-  startedAt: timestamp("started_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-  completedAt: timestamp("completed_at"),
-}, (t) => [
-  // 按 task 查询所有节点
-  index("task_node_runs_task_id_idx").on(t.taskId),
-]);
+export const taskNodeRuns = pgTable(
+  "task_node_runs",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .references(() => tasks.id)
+      .notNull(),
+    nodeType: text("node_type")
+      .$type<"plan" | "implement" | "verify" | "check" | "debug" | "finish">()
+      .notNull(),
+    iteration: integer("iteration").default(0).notNull(),
+    status: text("status")
+      .$type<"running" | "completed" | "failed">()
+      .notNull(),
+    outputSummary: text("output_summary"),
+    toolCallCount: integer("tool_call_count").default(0),
+    tokenUsage: jsonb("token_usage").$type<{
+      inputTokens: number;
+      outputTokens: number;
+    }>(),
+    verifyResult: jsonb("verify_result").$type<{
+      passed: boolean;
+      commands: Array<{
+        cmd: string;
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+        truncated: boolean;
+      }>;
+      durationMs: number;
+    }>(),
+    startedAt: timestamp("started_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    completedAt: timestamp("completed_at"),
+  },
+  (t) => [
+    // 按 task 查询所有节点
+    index("task_node_runs_task_id_idx").on(t.taskId),
+  ],
+);
 
 export type Task = typeof tasks.$inferSelect;
 export type NewTask = typeof tasks.$inferInsert;

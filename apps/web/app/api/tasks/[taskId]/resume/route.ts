@@ -27,7 +27,11 @@ export async function POST(_req: Request, context: RouteContext) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (task.status !== "failed" && task.status !== "paused" && task.status !== "cancelled") {
+  if (
+    task.status !== "failed" &&
+    task.status !== "paused" &&
+    task.status !== "cancelled"
+  ) {
     return Response.json(
       { error: `Cannot resume task in status: ${task.status}` },
       { status: 400 },
@@ -68,5 +72,8 @@ export async function POST(_req: Request, context: RouteContext) {
     },
   ]);
 
-  return Response.json({ task: { ...task, status: "planning" }, workflowRunId: run.id });
+  return Response.json({
+    task: { ...task, status: "planning" },
+    workflowRunId: run.runId,
+  });
 }

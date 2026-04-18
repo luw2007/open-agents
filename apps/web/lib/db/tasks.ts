@@ -39,16 +39,24 @@ export async function getNodeRunsByTaskId(taskId: string) {
   });
 }
 
-export async function getLatestNodeRun(taskId: string, nodeType: string) {
+export async function getLatestNodeRun(
+  taskId: string,
+  nodeType: "plan" | "implement" | "verify" | "check" | "debug" | "finish",
+) {
   return db.query.taskNodeRuns.findFirst({
-    where: and(eq(taskNodeRuns.taskId, taskId), eq(taskNodeRuns.nodeType, nodeType)),
+    where: and(
+      eq(taskNodeRuns.taskId, taskId),
+      eq(taskNodeRuns.nodeType, nodeType),
+    ),
     orderBy: [desc(taskNodeRuns.startedAt)],
   });
 }
 
 // ─── 变更 ────────────────────────────────────────────────────────
 
-export async function createTask(data: Omit<NewTask, "id" | "createdAt" | "updatedAt">) {
+export async function createTask(
+  data: Omit<NewTask, "id" | "createdAt" | "updatedAt">,
+) {
   const id = `task_${nanoid()}`;
   const [task] = await db
     .insert(tasks)
@@ -69,7 +77,9 @@ export async function updateTask(
   return task;
 }
 
-export async function createNodeRun(data: Omit<NewTaskNodeRun, "id" | "startedAt" | "updatedAt">) {
+export async function createNodeRun(
+  data: Omit<NewTaskNodeRun, "id" | "startedAt" | "updatedAt">,
+) {
   const id = `tnr_${nanoid()}`;
   const [run] = await db
     .insert(taskNodeRuns)

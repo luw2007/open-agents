@@ -6,7 +6,7 @@
 export function slugify(title: string): string {
   const base = title
     .toLowerCase()
-    .replace(/[^\w\s\u4e00-\u9fff-]/g, "") // 保留字母、数字、空格、中文、连字符
+    .replace(/[^\w\s\u4E00-\u9FFF-]/g, "") // 保留字母、数字、空格、中文、连字符
     .replace(/[\s_]+/g, "-") // 空格和下划线转连字符
     .replace(/-+/g, "-") // 合并连续连字符
     .replace(/^-|-$/g, "") // 去首尾连字符

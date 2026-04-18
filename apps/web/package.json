@@ -36,7 +36,6 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@streamdown/code": "^1.0.3",
-
     "ai": "catalog:",
     "arctic": "^3.7.0",
     "botid": "^1.5.11",

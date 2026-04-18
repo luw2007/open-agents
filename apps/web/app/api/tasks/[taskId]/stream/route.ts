@@ -24,21 +24,30 @@ export async function GET(_req: Request, context: RouteContext) {
   }
 
   if (!task.workflowRunId) {
-    return Response.json({ error: "No workflow run for this task" }, { status: 404 });
+    return Response.json(
+      { error: "No workflow run for this task" },
+      { status: 404 },
+    );
   }
 
   // 连接到 durable workflow run 的可读流
-  const run = await getRun<TaskStreamEvent>(task.workflowRunId);
+  const run = getRun<TaskStreamEvent>(task.workflowRunId);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        for await (const event of run.output) {
+        const readable = run.getReadable<TaskStreamEvent>();
+        const reader = readable.getReader();
+        let done = false;
+        while (!done) {
+          const result = await reader.read();
+          done = result.done;
+          if (done) break;
+          const event = result.value;
+          if (!event) break;
           const data = JSON.stringify(event);
           controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-
-          // 完成/错误后关闭流
           if (event.type === "task_completed" || event.type === "error") {
             controller.close();
             return;
@@ -47,7 +56,11 @@ export async function GET(_req: Request, context: RouteContext) {
         controller.close();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "error", message })}\n\n`));
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: "error", message })}\n\n`,
+          ),
+        );
         controller.close();
       }
     },

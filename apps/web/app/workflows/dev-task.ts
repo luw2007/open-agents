@@ -57,7 +57,7 @@ async function runPlanStep(
   const sandbox = await connectSandbox(options.sandboxState);
   const context = await loadTaskContext(sandbox, "plan", options.slug);
   const prompt = buildPlanPrompt(
-    { ...options, plan: undefined },
+    { id: options.taskId, ...options, plan: undefined },
     context.markdown,
   );
 
@@ -78,7 +78,7 @@ async function runImplementStep(
   const sandbox = await connectSandbox(options.sandboxState);
   const context = await loadTaskContext(sandbox, "implement", options.slug);
   const prompt = buildImplementPrompt(
-    { ...options, plan: plan.summary },
+    { id: options.taskId, ...options, plan: plan.summary },
     { summary: plan.summary, artifacts: plan.artifacts },
     context.markdown,
   );
@@ -111,7 +111,7 @@ async function runCheckStep(
   const sandbox = await connectSandbox(options.sandboxState);
   const context = await loadTaskContext(sandbox, "check", options.slug);
   const prompt = buildCheckPrompt(
-    { ...options, plan: impl.summary },
+    { id: options.taskId, ...options, plan: impl.summary },
     { summary: impl.summary, artifacts: impl.artifacts },
     verify,
     iteration,
@@ -155,7 +155,14 @@ async function persistNodeRun(
 
 async function persistTaskStatus(
   taskId: string,
-  status: "planning" | "implementing" | "verifying" | "completed" | "failed",
+  status:
+    | "planning"
+    | "implementing"
+    | "verifying"
+    | "completed"
+    | "failed"
+    | "paused"
+    | "cancelled",
   phase?: string,
   plan?: string,
 ) {
@@ -164,7 +171,9 @@ async function persistTaskStatus(
     status,
     currentPhase: phase,
     ...(plan ? { plan } : {}),
-    ...(status === "completed" || status === "failed" ? { completedAt: new Date() } : {}),
+    ...(status === "completed" || status === "failed"
+      ? { completedAt: new Date() }
+      : {}),
   });
 }
 
@@ -183,28 +192,56 @@ export async function runDevTaskWorkflow(options: DevTaskOptions) {
 
   try {
     // ─── Plan 阶段 ──────────────────────────────────────────────
-    await emitEvent(writable, { type: "node_started", nodeType: "plan", iteration: 0 });
+    await emitEvent(writable, {
+      type: "node_started",
+      nodeType: "plan",
+      iteration: 0,
+    });
     const planOutput = await runPlanStep(options, model);
     await persistNodeRun(taskId, "plan", 0, planOutput);
-    await emitEvent(writable, { type: "node_completed", nodeType: "plan", summary: planOutput.summary });
+    await emitEvent(writable, {
+      type: "node_completed",
+      nodeType: "plan",
+      summary: planOutput.summary,
+    });
 
-    if (planOutput.status === "needs_clarification" || planOutput.status === "blocked") {
+    if (
+      planOutput.status === "needs_clarification" ||
+      planOutput.status === "blocked"
+    ) {
       await persistTaskStatus(taskId, "paused", "plan", planOutput.summary);
       await emitEvent(writable, { type: "task_completed", status: "paused" });
       return;
     }
 
     // ─── Implement 阶段 ─────────────────────────────────────────
-    await persistTaskStatus(taskId, "implementing", "implement", planOutput.summary);
-    await emitEvent(writable, { type: "node_started", nodeType: "implement", iteration: 0 });
+    await persistTaskStatus(
+      taskId,
+      "implementing",
+      "implement",
+      planOutput.summary,
+    );
+    await emitEvent(writable, {
+      type: "node_started",
+      nodeType: "implement",
+      iteration: 0,
+    });
     let implOutput = await runImplementStep(options, planOutput, model);
     await persistNodeRun(taskId, "implement", 0, implOutput);
-    await emitEvent(writable, { type: "node_completed", nodeType: "implement", summary: implOutput.summary });
+    await emitEvent(writable, {
+      type: "node_completed",
+      nodeType: "implement",
+      summary: implOutput.summary,
+    });
 
     // ─── Verify + Check 循环 ────────────────────────────────────
     for (let i = 0; i < MAX_CHECK_ITERATIONS; i++) {
       await persistTaskStatus(taskId, "verifying", "verify");
-      await emitEvent(writable, { type: "node_started", nodeType: "verify", iteration: i });
+      await emitEvent(writable, {
+        type: "node_started",
+        nodeType: "verify",
+        iteration: i,
+      });
 
       const verifyResult = await runVerifyStep(
         options.sandboxState,
@@ -220,15 +257,32 @@ export async function runDevTaskWorkflow(options: DevTaskOptions) {
 
       if (verifyResult.passed) {
         await persistTaskStatus(taskId, "completed", "finish");
-        await emitEvent(writable, { type: "task_completed", status: "completed" });
+        await emitEvent(writable, {
+          type: "task_completed",
+          status: "completed",
+        });
         return;
       }
 
       // Check 修复
-      await emitEvent(writable, { type: "node_started", nodeType: "check", iteration: i });
-      const checkOutput = await runCheckStep(options, implOutput, verifyResult, i, model);
+      await emitEvent(writable, {
+        type: "node_started",
+        nodeType: "check",
+        iteration: i,
+      });
+      const checkOutput = await runCheckStep(
+        options,
+        implOutput,
+        verifyResult,
+        i,
+        model,
+      );
       await persistNodeRun(taskId, "check", i, checkOutput, verifyResult);
-      await emitEvent(writable, { type: "node_completed", nodeType: "check", summary: checkOutput.summary });
+      await emitEvent(writable, {
+        type: "node_completed",
+        nodeType: "check",
+        summary: checkOutput.summary,
+      });
 
       // 更新 implOutput 以便下一轮 check prompt 有最新上下文
       implOutput = {
@@ -257,7 +311,13 @@ export async function runDevTaskWorkflow(options: DevTaskOptions) {
     // 关闭 writable 流，否则 SSE 客户端连接会永久挂起
     try {
       const writer = writable.getWriter();
-      try { await writer.close(); } finally { writer.releaseLock(); }
-    } catch { /* ignore close errors */ }
+      try {
+        await writer.close();
+      } finally {
+        writer.releaseLock();
+      }
+    } catch {
+      /* ignore close errors */
+    }
   }
 }

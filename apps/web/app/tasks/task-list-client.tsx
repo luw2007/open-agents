@@ -1,7 +1,13 @@
 // apps/web/app/tasks/task-list-client.tsx
 "use client";
 
-import { Clock, Loader2, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import {
+  Clock,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+} from "lucide-react";
 import Link from "next/link";
 import type { Task } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,15 +30,21 @@ function statusIcon(status: string) {
 function statusBadge(status: string) {
   const colors: Record<string, string> = {
     planning: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
-    implementing: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
-    verifying: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
-    completed: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
+    implementing:
+      "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
+    verifying:
+      "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
+    completed:
+      "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
     failed: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
-    paused: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300",
+    paused:
+      "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300",
     cancelled: "bg-gray-100 text-gray-700 dark:bg-gray-900 dark:text-gray-300",
   };
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] ?? "bg-gray-100 text-gray-700"}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] ?? "bg-gray-100 text-gray-700"}`}
+    >
       {status}
     </span>
   );
@@ -47,7 +59,9 @@ function priorityBadge(priority: string | null) {
     P3: "bg-gray-100 text-gray-700 dark:bg-gray-900 dark:text-gray-300",
   };
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${colors[priority] ?? "bg-gray-100 text-gray-700"}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${colors[priority] ?? "bg-gray-100 text-gray-700"}`}
+    >
       {priority}
     </span>
   );
@@ -80,7 +94,9 @@ export function TaskListClient({ initialTasks }: { initialTasks: Task[] }) {
                 </div>
               </CardHeader>
               <CardContent className="pt-0">
-                <p className="line-clamp-2 text-sm text-muted-foreground">{task.prd}</p>
+                <p className="line-clamp-2 text-sm text-muted-foreground">
+                  {task.prd}
+                </p>
                 <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
                   <span>创建于 {formatRelativeTime(task.createdAt)}</span>
                   {task.currentPhase && <span>阶段: {task.currentPhase}</span>}

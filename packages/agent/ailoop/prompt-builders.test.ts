@@ -2,7 +2,11 @@
 import { describe, expect, test } from "bun:test";
 import type { SandboxState } from "@open-harness/sandbox";
 import type { TaskContext, VerifyResult } from "./types";
-import { buildCheckPrompt, buildImplementPrompt, buildPlanPrompt } from "./prompt-builders";
+import {
+  buildCheckPrompt,
+  buildImplementPrompt,
+  buildPlanPrompt,
+} from "./prompt-builders";
 
 // ─── 测试固定数据 ────────────────────────────────────────────────
 const baseTask: TaskContext = {
@@ -40,7 +44,9 @@ describe("buildPlanPrompt", () => {
     const result = buildPlanPrompt(baseTask, "## 项目规范\n代码风格指南");
     expect(result.systemPromptAddition).toBe("## 项目规范\n代码风格指南");
     expect(result.userPrompt).toContain("# Task\n添加用户注册功能");
-    expect(result.userPrompt).toContain("## Requirements\n实现用户注册 API，包含邮箱验证。");
+    expect(result.userPrompt).toContain(
+      "## Requirements\n实现用户注册 API，包含邮箱验证。",
+    );
     expect(result.userPrompt).toContain("task_complete");
     expect(result.userPrompt).toContain("ready_to_implement");
     expect(result.userPrompt).toContain("needs_clarification");
@@ -67,9 +73,18 @@ describe("buildImplementPrompt", () => {
 // ─── buildCheckPrompt 快照 ───────────────────────────────────────
 describe("buildCheckPrompt", () => {
   test("包含失败命令的 stderr 和迭代信息", () => {
-    const result = buildCheckPrompt(baseTask, basePlan, baseVerifyFail, 0, 5, "");
+    const result = buildCheckPrompt(
+      baseTask,
+      basePlan,
+      baseVerifyFail,
+      0,
+      5,
+      "",
+    );
     expect(result.userPrompt).toContain("Verification Failed (iteration 1/5)");
-    expect(result.userPrompt).toContain("Type error in src/routes/register.ts:15");
+    expect(result.userPrompt).toContain(
+      "Type error in src/routes/register.ts:15",
+    );
     expect(result.userPrompt).toContain("`bun run ci` (exit 1)");
     expect(result.userPrompt).toContain("4 iterations remaining");
     expect(result.userPrompt).toContain("fixes_applied");
@@ -85,8 +100,20 @@ describe("buildCheckPrompt", () => {
     const multiFailVerify: VerifyResult = {
       passed: false,
       commands: [
-        { cmd: "bun run lint", exitCode: 1, stdout: "lint error", stderr: "", truncated: false },
-        { cmd: "bun run test", exitCode: 2, stdout: "", stderr: "test failed", truncated: false },
+        {
+          cmd: "bun run lint",
+          exitCode: 1,
+          stdout: "lint error",
+          stderr: "",
+          truncated: false,
+        },
+        {
+          cmd: "bun run test",
+          exitCode: 2,
+          stdout: "",
+          stderr: "test failed",
+          truncated: false,
+        },
       ],
       durationMs: 8000,
     };
@@ -99,7 +126,13 @@ describe("buildCheckPrompt", () => {
     const verify: VerifyResult = {
       passed: false,
       commands: [
-        { cmd: "bun run ci", exitCode: 1, stdout: "stdout error content", stderr: "", truncated: false },
+        {
+          cmd: "bun run ci",
+          exitCode: 1,
+          stdout: "stdout error content",
+          stderr: "",
+          truncated: false,
+        },
       ],
       durationMs: 3000,
     };
@@ -108,8 +141,17 @@ describe("buildCheckPrompt", () => {
   });
 
   test("filesChanged 不是数组时安全处理", () => {
-    const implNoFiles = { summary: "did stuff", artifacts: { filesChanged: 42 } };
-    const result = buildCheckPrompt(baseTask, implNoFiles, baseVerifyFail, 0, 5);
+    const implNoFiles = {
+      summary: "did stuff",
+      artifacts: { filesChanged: 42 },
+    };
+    const result = buildCheckPrompt(
+      baseTask,
+      implNoFiles,
+      baseVerifyFail,
+      0,
+      5,
+    );
     // 不应该抛出错误，filesChanged 渲染为空
     expect(result.userPrompt).toContain("## Files Changed");
   });
@@ -119,7 +161,13 @@ describe("buildCheckPrompt", () => {
     const verify: VerifyResult = {
       passed: false,
       commands: [
-        { cmd: "bun run ci", exitCode: 1, stdout: "", stderr: longStderr, truncated: false },
+        {
+          cmd: "bun run ci",
+          exitCode: 1,
+          stdout: "",
+          stderr: longStderr,
+          truncated: false,
+        },
       ],
       durationMs: 2000,
     };

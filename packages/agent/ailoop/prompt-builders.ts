@@ -76,16 +76,22 @@ ${task.title}
 ${impl.summary}
 
 ## Files Changed
-${safeStringArray(impl.artifacts.filesChanged).map((f) => `- ${f}`).join("\n")}
+${safeStringArray(impl.artifacts.filesChanged)
+  .map((f) => `- ${f}`)
+  .join("\n")}
 
 ## Verification Failed (iteration ${iteration + 1}/${maxIterations})
 
-${failingCommands.map((c) => `### \`${c.cmd}\` (exit ${c.exitCode})
+${failingCommands
+  .map(
+    (c) => `### \`${c.cmd}\` (exit ${c.exitCode})
 
 \`\`\`
 ${truncate(c.stderr || c.stdout, 3000)}
 \`\`\`
-`).join("\n")}
+`,
+  )
+  .join("\n")}
 
 # Your Job
 Fix the issues above. You have ${maxIterations - iteration - 1} iterations remaining.
@@ -106,6 +112,7 @@ function truncate(s: string, max: number): string {
 
 /** 安全地从 artifacts 提取 string[] 字段 */
 function safeStringArray(val: unknown): string[] {
-  if (Array.isArray(val)) return val.filter((v): v is string => typeof v === "string");
+  if (Array.isArray(val))
+    return val.filter((v): v is string => typeof v === "string");
   return [];
 }

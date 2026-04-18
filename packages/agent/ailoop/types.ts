@@ -51,6 +51,10 @@ export type TaskStreamEvent =
   | { type: "node_started"; nodeType: string; iteration: number }
   | { type: "node_progress"; text: string }
   | { type: "node_completed"; nodeType: string; summary: string }
-  | { type: "verify_result"; passed: boolean; commands: VerifyResult["commands"] }
+  | {
+      type: "verify_result";
+      passed: boolean;
+      commands: VerifyResult["commands"];
+    }
   | { type: "task_completed"; status: "completed" | "failed" | "paused" }
   | { type: "error"; message: string };

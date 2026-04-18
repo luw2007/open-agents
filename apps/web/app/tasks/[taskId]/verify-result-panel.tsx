@@ -11,20 +11,28 @@ interface VerifyResultPanelProps {
   iteration?: number;
 }
 
-export function VerifyResultPanel({ result, iteration }: VerifyResultPanelProps) {
+export function VerifyResultPanel({
+  result,
+  iteration,
+}: VerifyResultPanelProps) {
   return (
-    <Card className={cn(
-      result.passed
-        ? "border-green-200 dark:border-green-800"
-        : "border-red-200 dark:border-red-800",
-    )}>
+    <Card
+      className={cn(
+        result.passed
+          ? "border-green-200 dark:border-green-800"
+          : "border-red-200 dark:border-red-800",
+      )}
+    >
       <CardHeader className="flex flex-row items-center gap-2 pb-2">
-        {result.passed
-          ? <CheckCircle2 className="size-4 text-green-500" />
-          : <XCircle className="size-4 text-red-500" />}
+        {result.passed ? (
+          <CheckCircle2 className="size-4 text-green-500" />
+        ) : (
+          <XCircle className="size-4 text-red-500" />
+        )}
         <CardTitle className="text-sm">
           验证结果{iteration !== undefined ? ` (第 ${iteration + 1} 轮)` : ""}
-          {" — "}{result.durationMs}ms
+          {" — "}
+          {result.durationMs}ms
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -32,12 +40,14 @@ export function VerifyResultPanel({ result, iteration }: VerifyResultPanelProps)
           <div key={i} className="space-y-1">
             <div className="flex items-center gap-2">
               <code className="text-xs font-mono">{cmd.cmd}</code>
-              <span className={cn(
-                "inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium",
-                cmd.exitCode === 0
-                  ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
-                  : "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
-              )}>
+              <span
+                className={cn(
+                  "inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium",
+                  cmd.exitCode === 0
+                    ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+                    : "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
+                )}
+              >
                 exit {cmd.exitCode}
               </span>
             </div>

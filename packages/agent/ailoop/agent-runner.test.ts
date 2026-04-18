@@ -3,13 +3,19 @@ import { describe, expect, mock, test } from "bun:test";
 
 // ─── Mock subagent registry ─────────────────────────────────────
 // 创建 mock stream 结果
-function createMockStreamResult(parts: Array<Record<string, unknown>>, messages: Array<Record<string, unknown>> = []) {
+function createMockStreamResult(
+  parts: Array<Record<string, unknown>>,
+  messages: Array<Record<string, unknown>> = [],
+) {
   return {
     fullStream: (async function* () {
       for (const part of parts) yield part;
     })(),
     response: Promise.resolve({
-      messages: messages.length > 0 ? messages : [{ role: "assistant", content: "fallback text" }],
+      messages:
+        messages.length > 0
+          ? messages
+          : [{ role: "assistant", content: "fallback text" }],
     }),
   };
 }
@@ -17,7 +23,15 @@ function createMockStreamResult(parts: Array<Record<string, unknown>>, messages:
 const mockStream = mock((_opts: Record<string, unknown>) =>
   createMockStreamResult([
     { type: "tool-call", toolName: "read", input: { path: "test.ts" } },
-    { type: "tool-call", toolName: "task_complete", input: { status: "completed", summary: "已完成实现", artifacts: { filesChanged: ["a.ts"] } } },
+    {
+      type: "tool-call",
+      toolName: "task_complete",
+      input: {
+        status: "completed",
+        summary: "已完成实现",
+        artifacts: { filesChanged: ["a.ts"] },
+      },
+    },
     { type: "finish-step", usage: { inputTokens: 100, outputTokens: 50 } },
   ]),
 );
@@ -91,7 +105,15 @@ describe("runAgentNode", () => {
     mockStream.mockClear();
     mockStream.mockImplementationOnce(() =>
       createMockStreamResult([
-        { type: "tool-call", toolName: "task_complete", input: { status: "ready_to_implement", summary: "plan", artifacts: {} } },
+        {
+          type: "tool-call",
+          toolName: "task_complete",
+          input: {
+            status: "ready_to_implement",
+            summary: "plan",
+            artifacts: {},
+          },
+        },
         { type: "finish-step", usage: { inputTokens: 50, outputTokens: 25 } },
       ]),
     );
@@ -107,7 +129,15 @@ describe("runAgentNode", () => {
     mockStream.mockImplementationOnce(() =>
       createMockStreamResult(
         [{ type: "finish-step", usage: { inputTokens: 10, outputTokens: 5 } }],
-        [{ role: "assistant", content: [{ type: "text", text: "第一段" }, { type: "text", text: "第二段" }] }],
+        [
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "第一段" },
+              { type: "text", text: "第二段" },
+            ],
+          },
+        ],
       ),
     );
 
@@ -118,7 +148,11 @@ describe("runAgentNode", () => {
   test("多个 finish-step 的 usage 累加", async () => {
     mockStream.mockImplementationOnce(() =>
       createMockStreamResult([
-        { type: "tool-call", toolName: "task_complete", input: { status: "done", summary: "ok", artifacts: {} } },
+        {
+          type: "tool-call",
+          toolName: "task_complete",
+          input: { status: "done", summary: "ok", artifacts: {} },
+        },
         { type: "finish-step", usage: { inputTokens: 100, outputTokens: 40 } },
         { type: "finish-step", usage: { inputTokens: 200, outputTokens: 60 } },
       ]),

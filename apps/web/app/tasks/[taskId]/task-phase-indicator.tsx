@@ -17,7 +17,11 @@ interface TaskPhaseIndicatorProps {
   livePhase: string | null;
 }
 
-export function TaskPhaseIndicator({ status, currentPhase, livePhase }: TaskPhaseIndicatorProps) {
+export function TaskPhaseIndicator({
+  status,
+  currentPhase,
+  livePhase,
+}: TaskPhaseIndicatorProps) {
   const activePhase = livePhase ?? currentPhase;
   const phaseIndex = PHASES.findIndex((p) => p.key === activePhase);
 
@@ -51,10 +55,14 @@ export function TaskPhaseIndicator({ status, currentPhase, livePhase }: TaskPhas
               {phase.label}
             </div>
             {i < PHASES.length - 1 && (
-              <div className={cn(
-                "h-px w-4",
-                isPast || isCompleted ? "bg-green-300 dark:bg-green-700" : "bg-border",
-              )} />
+              <div
+                className={cn(
+                  "h-px w-4",
+                  isPast || isCompleted
+                    ? "bg-green-300 dark:bg-green-700"
+                    : "bg-border",
+                )}
+              />
             )}
           </div>
         );

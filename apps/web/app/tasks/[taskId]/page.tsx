@@ -27,10 +27,5 @@ export default async function TaskDetailPage({ params }: Props) {
 
   const nodeRuns = await getNodeRunsByTaskId(taskId);
 
-  return (
-    <TaskDetailClient
-      task={task}
-      initialNodeRuns={nodeRuns}
-    />
-  );
+  return <TaskDetailClient task={task} initialNodeRuns={nodeRuns} />;
 }

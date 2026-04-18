@@ -55,10 +55,23 @@ export async function PATCH(req: Request, context: RouteContext) {
   }
 
   const updated = await updateTask(taskId, {
-    ...(body.status ? { status: body.status as "planning" | "implementing" | "verifying" | "completed" | "failed" | "cancelled" | "paused" } : {}),
+    ...(body.status
+      ? {
+          status: body.status as
+            | "planning"
+            | "implementing"
+            | "verifying"
+            | "completed"
+            | "failed"
+            | "cancelled"
+            | "paused",
+        }
+      : {}),
     ...(body.title ? { title: body.title } : {}),
     ...(body.prd ? { prd: body.prd } : {}),
-    ...(body.priority ? { priority: body.priority as "P0" | "P1" | "P2" | "P3" } : {}),
+    ...(body.priority
+      ? { priority: body.priority as "P0" | "P1" | "P2" | "P3" }
+      : {}),
   });
 
   return Response.json({ task: updated });

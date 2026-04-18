@@ -4,7 +4,8 @@ import type { Sandbox } from "@open-harness/sandbox";
 import type { Dirent } from "fs";
 
 // 不需要 mock.module，context-loader 只依赖传入的 sandbox 实例
-const { loadTaskContext, parseContextEntries } = await import("./context-loader");
+const { loadTaskContext, parseContextEntries } =
+  await import("./context-loader");
 
 // ─── 辅助函数 ────────────────────────────────────────────────────
 function makeDirent(name: string): Dirent {
@@ -22,7 +23,10 @@ function makeDirent(name: string): Dirent {
   } as Dirent;
 }
 
-function createMockSandbox(files: Record<string, string>, dirs?: Record<string, Dirent[]>): Sandbox {
+function createMockSandbox(
+  files: Record<string, string>,
+  dirs?: Record<string, Dirent[]>,
+): Sandbox {
   return {
     readFile: mock(async (path: string) => {
       const content = files[path];
@@ -36,10 +40,21 @@ function createMockSandbox(files: Record<string, string>, dirs?: Record<string, 
     type: "cloud" as const,
     workingDirectory: "/vercel/sandbox",
     writeFile: mock(async () => {}),
-    stat: mock(async () => ({ isDirectory: () => false, isFile: () => true, size: 0, mtimeMs: 0 })),
+    stat: mock(async () => ({
+      isDirectory: () => false,
+      isFile: () => true,
+      size: 0,
+      mtimeMs: 0,
+    })),
     access: mock(async () => {}),
     mkdir: mock(async () => {}),
-    exec: mock(async () => ({ success: true, exitCode: 0, stdout: "", stderr: "", truncated: false })),
+    exec: mock(async () => ({
+      success: true,
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      truncated: false,
+    })),
     stop: mock(async () => {}),
   } as unknown as Sandbox;
 }
@@ -137,7 +152,9 @@ describe("loadTaskContext", () => {
     const result = await loadTaskContext(sandbox, "plan", "t");
     expect(result.files).toHaveLength(1);
     expect(result.files[0]!.content.length).toBeLessThan(25_000);
-    expect(result.files[0]!.content).toContain("... (truncated, 25000 chars total)");
+    expect(result.files[0]!.content).toContain(
+      "... (truncated, 25000 chars total)",
+    );
   });
 
   test("合计字符数超过 100000 时停止加载后续文件", async () => {

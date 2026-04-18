@@ -50,7 +50,10 @@ export async function POST(req: Request) {
   }
 
   if (!body.sessionId || !body.title || !body.prd) {
-    return Response.json({ error: "sessionId, title, and prd are required" }, { status: 400 });
+    return Response.json(
+      { error: "sessionId, title, and prd are required" },
+      { status: 400 },
+    );
   }
 
   // 验证 session 所有权和 sandbox
@@ -96,5 +99,5 @@ export async function POST(req: Request) {
     },
   ]);
 
-  return Response.json({ task, workflowRunId: run.id }, { status: 201 });
+  return Response.json({ task, workflowRunId: run.runId }, { status: 201 });
 }

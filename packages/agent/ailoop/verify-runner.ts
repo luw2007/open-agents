@@ -20,7 +20,9 @@ export async function runVerify(
   const results: VerifyResult["commands"] = [];
 
   for (const cmd of commands) {
-    const res = await sandbox.exec(cmd, workingDirectory, 300_000, { signal: abortSignal });
+    const res = await sandbox.exec(cmd, workingDirectory, 300_000, {
+      signal: abortSignal,
+    });
     results.push({
       cmd,
       exitCode: res.exitCode ?? -1,

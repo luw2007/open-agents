@@ -9,7 +9,11 @@ import { getSessionById } from "@/lib/db/sessions";
 const createTaskSchema = z.object({
   sessionId: z.string().min(1),
   title: z.string().min(1).max(200),
-  slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/),
+  slug: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9-]+$/),
   prd: z.string().min(1),
   priority: z.enum(["P0", "P1", "P2", "P3"]).default("P2"),
   verifyCommands: z.array(z.string()).optional(),
