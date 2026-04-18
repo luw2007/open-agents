@@ -1,4 +1,6 @@
 import type { Sandbox, SandboxHooks } from "./interface";
+import { connectSrt } from "./srt/connect";
+import type { SrtState } from "./srt/state";
 import type { SandboxStatus } from "./types";
 import { connectVercel } from "./vercel/connect";
 import type { VercelState } from "./vercel/state";
@@ -7,10 +9,12 @@ import type { VercelState } from "./vercel/state";
 export type { SandboxStatus };
 
 /**
- * Unified sandbox state type.
- * Use `type` discriminator to determine which sandbox implementation to use.
+ * 统一沙箱状态类型。
+ * 使用 `type` 判别字段确定使用哪个沙箱实现。
  */
-export type SandboxState = { type: "vercel" } & VercelState;
+export type SandboxState =
+  | ({ type: "vercel" } & VercelState)
+  | ({ type: "srt" } & SrtState);
 
 /**
  * Base connect options for all sandbox types.
@@ -45,15 +49,15 @@ export interface ConnectOptions {
 }
 
 /**
- * Configuration for connecting to a sandbox.
+ * 连接沙箱的配置。
  */
 export type SandboxConnectConfig = {
-  state: { type: "vercel" } & VercelState;
+  state: SandboxState;
   options?: ConnectOptions;
 };
 
 /**
- * Connect to a sandbox based on the provided configuration.
+ * 根据状态类型连接对应的沙箱实现。
  */
 export async function connectSandbox(
   configOrState: SandboxConnectConfig | SandboxState,
@@ -65,11 +69,23 @@ export async function connectSandbox(
     typeof configOrState.state === "object" &&
     "type" in configOrState.state;
 
-  if (isNewApi) {
-    const config = configOrState as SandboxConnectConfig;
-    return connectVercel(config.state, config.options);
-  }
+  const state = isNewApi
+    ? (configOrState as SandboxConnectConfig).state
+    : (configOrState as SandboxState);
+  const options = isNewApi
+    ? (configOrState as SandboxConnectConfig).options
+    : legacyOptions;
 
-  const state = configOrState as SandboxState;
-  return connectVercel(state, legacyOptions);
+  switch (state.type) {
+    case "vercel":
+      return connectVercel(state, options);
+    case "srt":
+      return connectSrt(state, options);
+    default: {
+      const _exhaustive: never = state;
+      throw new Error(
+        `未知的沙箱类型: ${(_exhaustive as { type: string }).type}`,
+      );
+    }
+  }
 }
