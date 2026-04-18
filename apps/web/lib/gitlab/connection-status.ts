@@ -5,9 +5,7 @@ export type GitLabConnectionStatus =
   | "reconnect_required";
 
 // 需要重连的原因
-export type GitLabConnectionReason =
-  | "token_unavailable"
-  | "token_expired";
+export type GitLabConnectionReason = "token_unavailable" | "token_expired";
 
 // 状态响应结构
 export interface GitLabConnectionStatusResponse {

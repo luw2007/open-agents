@@ -90,9 +90,11 @@ interface GitLabUserResponse {
 }
 
 // 获取当前用户信息
-export async function fetchGitLabUser(
-  token: string,
-): Promise<{ username: string; name: string; avatar_url: string | null } | null> {
+export async function fetchGitLabUser(token: string): Promise<{
+  username: string;
+  name: string;
+  avatar_url: string | null;
+} | null> {
   const user = await fetchGitLabAPI<GitLabUserResponse>("/user", token);
   if (!user) return null;
 
@@ -113,9 +115,12 @@ interface GitLabGroupResponse {
 }
 
 // 获取用户所属的 groups（Developer+ 权限）
-export async function fetchGitLabGroups(
-  token: string,
-): Promise<Array<{ path: string; name: string; avatar_url: string | null; full_path: string }> | null> {
+export async function fetchGitLabGroups(token: string): Promise<Array<{
+  path: string;
+  name: string;
+  avatar_url: string | null;
+  full_path: string;
+}> | null> {
   // min_access_level=30 表示 Developer 及以上
   const groups = await fetchGitLabAPI<GitLabGroupResponse[]>(
     "/groups?min_access_level=30&per_page=100",

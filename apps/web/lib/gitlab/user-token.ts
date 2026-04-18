@@ -34,9 +34,7 @@ export async function getUserGitLabToken(
         tokenExpiresAt: users.tokenExpiresAt,
       })
       .from(users)
-      .where(
-        and(eq(users.id, resolvedUserId), eq(users.provider, "gitlab")),
-      )
+      .where(and(eq(users.id, resolvedUserId), eq(users.provider, "gitlab")))
       .limit(1);
 
     const gitlabUser = result[0];
@@ -97,9 +95,7 @@ export async function getUserGitLabToken(
           tokenExpiresAt: newExpiresAt,
           updatedAt: new Date(),
         })
-        .where(
-          and(eq(users.id, resolvedUserId), eq(users.provider, "gitlab")),
-        );
+        .where(and(eq(users.id, resolvedUserId), eq(users.provider, "gitlab")));
     } catch (persistError) {
       console.error(
         "持久化刷新后的 GitLab token 失败。当前请求可正常使用，但后续请求可能失败:",

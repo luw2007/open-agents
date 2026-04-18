@@ -18,7 +18,10 @@ export function parseGitLabUrl(
   // HTTPS 格式: https://gitlab.example.com/group[/subgroup]/project[.git]
   try {
     const url = new URL(repoUrl);
-    const parts = url.pathname.replace(/^\/|\/$/g, "").replace(/\.git$/, "").split("/");
+    const parts = url.pathname
+      .replace(/^\/|\/$/g, "")
+      .replace(/\.git$/, "")
+      .split("/");
     if (parts.length < 2) return null;
     const repo = parts.pop()!;
     const owner = parts.join("/");

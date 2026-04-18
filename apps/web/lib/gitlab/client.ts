@@ -250,10 +250,7 @@ export async function getMergeRequestMergeReadiness(params: {
       `/projects/${projectPath}/merge_requests/${params.mrNumber}?include_rebase_in_progress=true`,
       token,
     ),
-    gitlabFetch<GitLabProjectResponse>(
-      `/projects/${projectPath}`,
-      token,
-    ),
+    gitlabFetch<GitLabProjectResponse>(`/projects/${projectPath}`, token),
   ]);
 
   if ("error" in mrResult && mrResult.data === null) {
@@ -291,9 +288,7 @@ export async function getMergeRequestMergeReadiness(params: {
       }
     : null;
 
-  const pipelineCheckState = getPipelineCheckState(
-    pipeline?.status ?? null,
-  );
+  const pipelineCheckState = getPipelineCheckState(pipeline?.status ?? null);
 
   // 计算允许的合并方式
   const allowedMergeMethods: MergeMethod[] = [];
@@ -318,15 +313,11 @@ export async function getMergeRequestMergeReadiness(params: {
 
   // 如果项目允许 squash，添加 squash 选项
   // squash_option: "default_on", "always", "default_off", "never"
-  if (
-    project.squash_option &&
-    project.squash_option !== "never"
-  ) {
+  if (project.squash_option && project.squash_option !== "never") {
     allowedMergeMethods.push("squash");
   }
 
-  const defaultMergeMethod: MergeMethod =
-    allowedMergeMethods[0] ?? "merge";
+  const defaultMergeMethod: MergeMethod = allowedMergeMethods[0] ?? "merge";
 
   // 综合判断 canMerge + 收集 reasons
   const reasons: string[] = [];
@@ -361,10 +352,7 @@ export async function getMergeRequestMergeReadiness(params: {
   }
 
   // 如果项目要求 pipeline 通过，但没有 pipeline
-  if (
-    project.only_allow_merge_if_pipeline_succeeds &&
-    pipeline === null
-  ) {
+  if (project.only_allow_merge_if_pipeline_succeeds && pipeline === null) {
     reasons.push("项目要求 pipeline 通过，但当前 MR 没有关联 pipeline");
   }
 
@@ -532,8 +520,7 @@ export async function mergeMergeRequest(params: {
 
   const data = result.data as GitLabMergeResponse;
   // 合并后返回的 SHA：squash 模式用 squash_commit_sha，否则用 merge_commit_sha
-  const sha =
-    data.squash_commit_sha ?? data.merge_commit_sha ?? "";
+  const sha = data.squash_commit_sha ?? data.merge_commit_sha ?? "";
 
   return { success: true, sha };
 }
@@ -778,14 +765,10 @@ export async function createProject(params: {
     body.namespace_id = matched.id;
   }
 
-  const result = await gitlabFetch<GitLabProjectResponse>(
-    "/projects",
-    token,
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    },
-  );
+  const result = await gitlabFetch<GitLabProjectResponse>("/projects", token, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 
   if ("error" in result && result.data === null) {
     if (result.status === 400) {
