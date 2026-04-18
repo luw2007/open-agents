@@ -83,7 +83,7 @@ export function SessionStarter({
     !reconnectRequired &&
     !!selectedOwner &&
     !!selectedRepo &&
-    session?.authProvider === "vercel";
+    session?.authProvider === "gitlab";
   const {
     data: repoProjects,
     loading: repoProjectsLoading,
@@ -167,7 +167,7 @@ export function SessionStarter({
     !reconnectRequired &&
     !!selectedOwner &&
     !!selectedRepo &&
-    (sessionLoading || session?.authProvider === "vercel");
+    (sessionLoading || session?.authProvider === "gitlab");
 
   const handleSubmit = () => {
     if (isSubmitDisabled) return;

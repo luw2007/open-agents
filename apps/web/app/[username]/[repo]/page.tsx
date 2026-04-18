@@ -55,7 +55,7 @@ export default async function RepoPage({ params }: RepoPageProps) {
   const session = await getServerSession();
   if (!session?.user) {
     redirect(
-      `/api/auth/signin/vercel?next=${encodeURIComponent(`/${username}/${repo}`)}`,
+      `/api/auth/signin/gitlab?next=${encodeURIComponent(`/${username}/${repo}`)}`,
     );
   }
 
