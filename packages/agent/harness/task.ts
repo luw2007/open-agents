@@ -10,7 +10,13 @@ export const taskConfigSchema = z.object({
   id: z.string(),
   title: z.string(),
   slug: z.string(),
-  status: z.enum(["planning", "in_progress", "review", "completed", "archived"]),
+  status: z.enum([
+    "planning",
+    "in_progress",
+    "review",
+    "completed",
+    "archived",
+  ]),
   priority: z.enum(["P0", "P1", "P2", "P3"]).default("P2"),
   assignee: z.string().optional(),
   description: z.string().optional(),
@@ -21,7 +27,9 @@ export const taskConfigSchema = z.object({
   baseBranch: z.string().optional(),
   scope: z.string().optional(),
   prUrl: z.string().optional(),
-  nextAction: z.array(z.enum(["research", "implement", "check", "debug", "finish", "create-pr"])),
+  nextAction: z.array(
+    z.enum(["research", "implement", "check", "debug", "finish", "create-pr"]),
+  ),
   currentPhase: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -42,26 +50,37 @@ export type ContextEntry = z.infer<typeof contextEntrySchema>;
 export const harnessConfigSchema = z.object({
   sessionCommitMessage: z.string().default("chore: record journal"),
   maxJournalLines: z.number().default(2000),
-  packages: z.record(z.object({
-    path: z.string(),
-    type: z.enum(["package", "submodule"]).default("package"),
-  })).optional(),
+  packages: z
+    .record(
+      z.string(),
+      z.object({
+        path: z.string(),
+        type: z.enum(["package", "submodule"]).default("package"),
+      }),
+    )
+    .optional(),
   defaultPackage: z.string().optional(),
-  specScope: z.union([z.literal("active_task"), z.array(z.string())]).optional(),
-  hooks: z.object({
-    afterCreate: z.array(z.string()).default([]),
-    afterStart: z.array(z.string()).default([]),
-    afterFinish: z.array(z.string()).default([]),
-    afterArchive: z.array(z.string()).default([]),
-  }).default({
-    afterCreate: [],
-    afterStart: [],
-    afterFinish: [],
-    afterArchive: [],
-  }),
-  update: z.object({
-    skip: z.array(z.string()).default([]),
-  }).default({ skip: [] }),
+  specScope: z
+    .union([z.literal("active_task"), z.array(z.string())])
+    .optional(),
+  hooks: z
+    .object({
+      afterCreate: z.array(z.string()).default([]),
+      afterStart: z.array(z.string()).default([]),
+      afterFinish: z.array(z.string()).default([]),
+      afterArchive: z.array(z.string()).default([]),
+    })
+    .default({
+      afterCreate: [],
+      afterStart: [],
+      afterFinish: [],
+      afterArchive: [],
+    }),
+  update: z
+    .object({
+      skip: z.array(z.string()).default([]),
+    })
+    .default({ skip: [] }),
 });
 
 export type HarnessConfig = z.infer<typeof harnessConfigSchema>;
@@ -70,7 +89,7 @@ export type HarnessConfig = z.infer<typeof harnessConfigSchema>;
 export function createDefaultTaskConfig(
   title: string,
   slug: string,
-  options: Partial<TaskConfig> = {}
+  options: Partial<TaskConfig> = {},
 ): TaskConfig {
   const now = new Date().toISOString();
   return {

@@ -15,7 +15,7 @@ export function buildTaskContext(
   infoContent: string | null,
   implementContext: ContextEntry[],
   checkContext: ContextEntry[],
-  specContents: Map<string, string>
+  specContents: Map<string, string>,
 ): string {
   const parts: string[] = [];
 
@@ -81,7 +81,7 @@ Current phase: ${taskConfig.currentPhase || "not started"}
  */
 export function buildHarnessSystemPrompt(
   hasActiveTask: boolean,
-  taskContext?: string
+  taskContext?: string,
 ): string {
   const parts: string[] = [];
 
@@ -166,7 +166,7 @@ export function buildImplementContext(
   prdContent: string | null,
   infoContent: string | null,
   contextEntries: ContextEntry[],
-  relevantSpecs: Map<string, string>
+  relevantSpecs: Map<string, string>,
 ): string {
   const parts: string[] = [];
 
@@ -181,7 +181,9 @@ export function buildImplementContext(
   }
 
   if (contextEntries.length > 0) {
-    parts.push(`## Context Files\n${contextEntries.map((e) => `- ${e.path}: ${e.reason}`).join("\n")}`);
+    parts.push(
+      `## Context Files\n${contextEntries.map((e) => `- ${e.path}: ${e.reason}`).join("\n")}`,
+    );
   }
 
   if (relevantSpecs.size > 0) {
@@ -191,7 +193,9 @@ export function buildImplementContext(
     }
   }
 
-  parts.push(`\n## Your Role\nImplement the feature according to the requirements and guidelines above. Follow existing code patterns and run validation commands when done.`);
+  parts.push(
+    `\n## Your Role\nImplement the feature according to the requirements and guidelines above. Follow existing code patterns and run validation commands when done.`,
+  );
 
   return parts.join("\n\n");
 }
@@ -203,20 +207,24 @@ export function buildCheckContext(
   taskConfig: TaskConfig,
   prdContent: string | null,
   contextEntries: ContextEntry[],
-  relevantSpecs: Map<string, string>
+  relevantSpecs: Map<string, string>,
 ): string {
   const parts: string[] = [];
 
   parts.push(`# Code Review Task: ${taskConfig.title}`);
 
-  parts.push(`## Your Role\nReview the implementation against requirements and specifications. Identify issues and fix them directly.`);
+  parts.push(
+    `## Your Role\nReview the implementation against requirements and specifications. Identify issues and fix them directly.`,
+  );
 
   if (prdContent) {
     parts.push(`## Requirements to Verify\n${prdContent}`);
   }
 
   if (contextEntries.length > 0) {
-    parts.push(`## Check Context\n${contextEntries.map((e) => `- ${e.path}: ${e.reason}`).join("\n")}`);
+    parts.push(
+      `## Check Context\n${contextEntries.map((e) => `- ${e.path}: ${e.reason}`).join("\n")}`,
+    );
   }
 
   if (relevantSpecs.size > 0) {
@@ -226,7 +234,9 @@ export function buildCheckContext(
     }
   }
 
-  parts.push(`\n## Review Checklist\n- [ ] Code follows project conventions\n- [ ] Requirements are met\n- [ ] Error handling is comprehensive\n- [ ] Type safety is maintained\n- [ ] No lint or type errors\n- [ ] Tests pass (if applicable)`);
+  parts.push(
+    `\n## Review Checklist\n- [ ] Code follows project conventions\n- [ ] Requirements are met\n- [ ] Error handling is comprehensive\n- [ ] Type safety is maintained\n- [ ] No lint or type errors\n- [ ] Tests pass (if applicable)`,
+  );
 
   return parts.join("\n\n");
 }
@@ -237,7 +247,7 @@ export function buildCheckContext(
 export function buildDebugContext(
   taskConfig: TaskConfig,
   errorContext: string,
-  contextEntries: ContextEntry[]
+  contextEntries: ContextEntry[],
 ): string {
   const parts: string[] = [];
 
@@ -245,13 +255,19 @@ export function buildDebugContext(
 
   parts.push(`## Error Context\n${errorContext}`);
 
-  parts.push(`## Your Role\nDiagnose the root cause of the issue and implement a fix. Be thorough in your analysis.`);
+  parts.push(
+    `## Your Role\nDiagnose the root cause of the issue and implement a fix. Be thorough in your analysis.`,
+  );
 
   if (contextEntries.length > 0) {
-    parts.push(`## Relevant Context\n${contextEntries.map((e) => `- ${e.path}: ${e.reason}`).join("\n")}`);
+    parts.push(
+      `## Relevant Context\n${contextEntries.map((e) => `- ${e.path}: ${e.reason}`).join("\n")}`,
+    );
   }
 
-  parts.push(`\n## Debugging Approach\n1. Analyze error messages and stack traces\n2. Trace execution flow to find root cause\n3. Implement minimal, targeted fix\n4. Verify the fix resolves the issue\n5. Check for regressions`);
+  parts.push(
+    `\n## Debugging Approach\n1. Analyze error messages and stack traces\n2. Trace execution flow to find root cause\n3. Implement minimal, targeted fix\n4. Verify the fix resolves the issue\n5. Check for regressions`,
+  );
 
   return parts.join("\n\n");
 }
