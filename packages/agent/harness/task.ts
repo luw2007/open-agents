@@ -42,7 +42,7 @@ export type ContextEntry = z.infer<typeof contextEntrySchema>;
 export const harnessConfigSchema = z.object({
   sessionCommitMessage: z.string().default("chore: record journal"),
   maxJournalLines: z.number().default(2000),
-  packages: z.record(z.object({
+  packages: z.record(z.string(), z.object({
     path: z.string(),
     type: z.enum(["package", "submodule"]).default("package"),
   })).optional(),
