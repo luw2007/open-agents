@@ -2,10 +2,9 @@
 // GET /api/tasks — 列出当前用户的所有 dev tasks
 // POST /api/tasks — 创建新 task 并启动 workflow
 import type { SandboxState } from "@open-harness/sandbox";
-import { gateway } from "ai";
 import { sendJob, JOB_QUEUES } from "@/lib/workflow";
 import { getServerSession } from "@/lib/session/get-server-session";
-import { createTask, getTasksByUserId } from "@/lib/db/tasks";
+import { createTask, getTasksByUserId, updateTask } from "@/lib/db/tasks";
 import { getSessionById } from "@/lib/db/sessions";
 import { isDevTasksEnabled } from "@/lib/feature-flags";
 import { APP_DEFAULT_MODEL_ID } from "@/lib/models";
@@ -80,10 +79,9 @@ export async function POST(req: Request) {
     verifyCommands: body.verifyCommands,
   });
 
-  // 使用默认模型
-  const model = gateway(APP_DEFAULT_MODEL_ID);
-
-  // 启动 workflow
+  // 使用默认模型 ID（在 worker 端重建 LanguageModel 对象）
+  const workingDirectory =
+    sandboxState.type === "srt" ? sandboxState.workdir : "/vercel/sandbox";
   const runId = crypto.randomUUID();
   await sendJob(JOB_QUEUES.DEV_TASK, {
     runId,
@@ -94,11 +92,17 @@ export async function POST(req: Request) {
       prd: task.prd,
       priority: task.priority ?? "P2",
       sandboxState,
-      workingDirectory: "/vercel/sandbox",
+      workingDirectory,
       verifyCommands: body.verifyCommands,
-      model,
+      modelId: process.env.DEV_TASK_MODEL_ID ?? APP_DEFAULT_MODEL_ID,
     },
   });
 
-  return Response.json({ task, workflowRunId: runId }, { status: 201 });
+  // 立即写入 workflowRunId，确保 SSE stream 可在 job 执行前连接
+  await updateTask(task.id, { workflowRunId: runId });
+
+  return Response.json(
+    { task: { ...task, workflowRunId: runId }, workflowRunId: runId },
+    { status: 201 },
+  );
 }

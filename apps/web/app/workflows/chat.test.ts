@@ -247,7 +247,10 @@ function makeOptions(overrides?: Record<string, unknown>) {
     selectedModelId: "gpt-4",
     modelId: "gpt-4",
     agentOptions: {
-      sandbox: { state: { type: "vercel" } },
+      sandbox: {
+        state: { type: "srt", workdir: "/tmp/test" },
+        workingDirectory: "/tmp/test",
+      },
     },
     maxSteps: 1,
     ...overrides,

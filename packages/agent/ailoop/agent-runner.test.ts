@@ -52,7 +52,7 @@ const { runAgentNode } = await import("./agent-runner");
 const baseInput = {
   systemPromptAddition: "## Spec",
   userPrompt: "实现功能 X",
-  sandboxState: { type: "vercel" as const, sandboxName: "sbx-test" },
+  sandboxState: { type: "srt" as const, workdir: "/tmp/test" },
   workingDirectory: "/vercel/sandbox",
   model: {} as import("ai").LanguageModel,
 };

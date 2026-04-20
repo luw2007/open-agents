@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 mock.module("server-only", () => ({}));
 
+const WORKDIR = "/tmp/open-agents-sandbox/session-1";
+
 type TestSandboxState = {
-  type: "vercel";
-  sandboxName?: string;
+  type: "srt";
+  workdir: string;
   expiresAt?: number;
 };
 
@@ -21,15 +23,8 @@ type TestSessionRecord = {
   lastActivityAt: Date | null;
 };
 
-const connectCalls: Array<{
-  state: Record<string, unknown>;
-  options: Record<string, unknown> | undefined;
-}> = [];
 const updateCalls: Array<Record<string, unknown>> = [];
-const kickCalls: Array<{ sessionId: string; reason: string }> = [];
-
 let stopCallCount = 0;
-let connectSandboxResumeError: Error | null = null;
 let sessionRecord: TestSessionRecord;
 
 mock.module("@/app/api/sessions/_lib/session-context", () => ({
@@ -38,20 +33,10 @@ mock.module("@/app/api/sessions/_lib/session-context", () => ({
     userId: "user-1",
   }),
   requireOwnedSession: async () => ({ ok: true as const, sessionRecord }),
-  requireOwnedSessionWithSandboxGuard: async ({
-    sandboxGuard,
-  }: {
-    sandboxGuard: (state: TestSandboxState | null) => boolean;
-  }) =>
-    sandboxGuard(sessionRecord.sandboxState)
-      ? ({ ok: true as const, sessionRecord } as const)
-      : ({
-          ok: false as const,
-          response: Response.json(
-            { error: "Sandbox not initialized" },
-            { status: 400 },
-          ),
-        } as const),
+  requireOwnedSessionWithSandboxGuard: async () => ({
+    ok: true as const,
+    sessionRecord,
+  }),
 }));
 
 mock.module("@/lib/db/sessions", () => ({
@@ -68,48 +53,59 @@ mock.module("@/lib/db/sessions", () => ({
 }));
 
 mock.module("@/lib/sandbox/lifecycle-kick", () => ({
-  kickSandboxLifecycleWorkflow: (input: {
-    sessionId: string;
-    reason: string;
-  }) => {
-    kickCalls.push(input);
-  },
+  kickSandboxLifecycleWorkflow: () => {},
 }));
 
 mock.module("@open-harness/sandbox", () => ({
-  connectSandbox: async (
-    state: Record<string, unknown>,
-    options?: Record<string, unknown>,
-  ) => {
-    connectCalls.push({ state, options });
+  connectSandbox: async () => ({
+    stop: async () => {
+      stopCallCount += 1;
+    },
+    getState: () => ({
+      type: "srt" as const,
+      workdir: WORKDIR,
+    }),
+  }),
+}));
 
-    if (
-      connectSandboxResumeError &&
-      options?.resume === true &&
-      typeof state.sandboxName === "string" &&
-      state.snapshotId === undefined
-    ) {
-      throw connectSandboxResumeError;
-    }
-
-    const sandboxName =
-      typeof state.sandboxName === "string"
-        ? state.sandboxName
-        : "session_session-1";
-    return {
-      id: "runtime-1",
-      expiresAt: Date.now() + 120_000,
-      workingDirectory: "/vercel/sandbox",
-      stop: async () => {
-        stopCallCount += 1;
-      },
-      getState: () => ({
-        type: "vercel" as const,
-        sandboxName,
-        expiresAt: Date.now() + 120_000,
-      }),
-    };
-  },
+mock.module("@/lib/sandbox/utils", () => ({
+  canOperateOnSandbox: (state: unknown) =>
+    state !== null && typeof state === "object" && "workdir" in state,
+  clearSandboxState: (state: TestSandboxState | null) =>
+    state ? { type: "srt", workdir: state.workdir } : null,
+  clearSandboxResumeState: (state: TestSandboxState | null) =>
+    state ? { type: "srt", workdir: state.workdir } : null,
+  getPersistentSandboxName: (state: unknown) =>
+    state && typeof state === "object" && "workdir" in state
+      ? (state as TestSandboxState).workdir
+      : null,
+  getResumableSandboxName: (state: unknown) =>
+    state && typeof state === "object" && "workdir" in state
+      ? (state as TestSandboxState).workdir
+      : null,
+  hasResumableSandboxState: (state: unknown) =>
+    state !== null && typeof state === "object" && "workdir" in state,
+  hasPausedSandboxState: (state: unknown) =>
+    state !== null &&
+    typeof state === "object" &&
+    "workdir" in state &&
+    !("expiresAt" in (state as Record<string, unknown>)),
+  getSessionSandboxName: (sessionId: string) => `session_${sessionId}`,
+  hasRuntimeSandboxState: (state: unknown) =>
+    state !== null &&
+    typeof state === "object" &&
+    "expiresAt" in (state as Record<string, unknown>),
+  isSandboxActive: (state: unknown) =>
+    state !== null &&
+    typeof state === "object" &&
+    "expiresAt" in (state as Record<string, unknown>),
+  isSandboxNotFoundError: (msg: string) =>
+    msg.toLowerCase().includes("status code 404"),
+  isSandboxUnavailableError: (msg: string) =>
+    msg.toLowerCase().includes("status code 404") ||
+    msg.toLowerCase().includes("sandbox not found"),
+  clearUnavailableSandboxState: (state: TestSandboxState | null) =>
+    state ? { type: "srt", workdir: state.workdir } : null,
 }));
 
 const routeModulePromise = import("./route");
@@ -121,8 +117,8 @@ function makeSessionRecord(
     id: "session-1",
     userId: "user-1",
     sandboxState: {
-      type: "vercel",
-      sandboxName: "session_session-1",
+      type: "srt",
+      workdir: WORKDIR,
       expiresAt: Date.now() + 60_000,
     },
     snapshotUrl: null,
@@ -138,15 +134,12 @@ function makeSessionRecord(
 
 describe("/api/sandbox/snapshot", () => {
   beforeEach(() => {
-    connectCalls.length = 0;
     updateCalls.length = 0;
-    kickCalls.length = 0;
     stopCallCount = 0;
-    connectSandboxResumeError = null;
     sessionRecord = makeSessionRecord();
   });
 
-  test("POST pauses a named persistent sandbox without writing a legacy snapshot", async () => {
+  test("POST pauses an srt sandbox, calls stop, updates session with cleared state", async () => {
     const { POST } = await routeModulePromise;
 
     const response = await POST(
@@ -158,92 +151,42 @@ describe("/api/sandbox/snapshot", () => {
     );
     const payload = (await response.json()) as {
       snapshotId: string | null;
+      createdAt: number;
     };
 
     expect(response.ok).toBe(true);
     expect(stopCallCount).toBe(1);
-    expect(payload.snapshotId).toBe("session_session-1");
-    expect(connectCalls[0]).toMatchObject({
-      state: {
-        type: "vercel",
-        sandboxName: "session_session-1",
-      },
-    });
+    expect(payload.snapshotId).toBe(WORKDIR);
     expect(updateCalls[0]).toEqual(
       expect.objectContaining({
         snapshotUrl: null,
         snapshotCreatedAt: null,
         sandboxState: {
-          type: "vercel",
-          sandboxName: "session_session-1",
+          type: "srt",
+          workdir: WORKDIR,
         },
         lifecycleVersion: 3,
         lifecycleState: "hibernated",
+        sandboxExpiresAt: null,
+        hibernateAfter: null,
+        lifecycleRunId: null,
+        lifecycleError: null,
       }),
     );
   });
 
-  test("PUT resumes an existing named persistent sandbox", async () => {
+  test("PUT returns 400 for srt sandboxes saying snapshot restore is not supported", async () => {
     const { PUT } = await routeModulePromise;
 
     sessionRecord = makeSessionRecord({
       sandboxState: {
-        type: "vercel",
-        sandboxName: "session_session-1",
+        type: "srt",
+        workdir: WORKDIR,
       },
       lifecycleState: "hibernated",
       sandboxExpiresAt: null,
       hibernateAfter: null,
     });
-
-    const response = await PUT(
-      new Request("http://localhost/api/sandbox/snapshot", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: "session-1" }),
-      }),
-    );
-
-    expect(response.ok).toBe(true);
-    expect(connectCalls[0]).toMatchObject({
-      state: {
-        type: "vercel",
-        sandboxName: "session_session-1",
-      },
-      options: {
-        resume: true,
-      },
-    });
-    expect(updateCalls[0]).toEqual(
-      expect.objectContaining({
-        sandboxState: expect.objectContaining({
-          type: "vercel",
-          sandboxName: "session_session-1",
-        }),
-        snapshotUrl: null,
-        snapshotCreatedAt: null,
-        lifecycleVersion: 3,
-      }),
-    );
-    expect(kickCalls).toEqual([
-      { sessionId: "session-1", reason: "snapshot-restored" },
-    ]);
-  });
-
-  test("PUT clears a broken persistent sandbox handle after a 404", async () => {
-    const { PUT } = await routeModulePromise;
-
-    sessionRecord = makeSessionRecord({
-      sandboxState: {
-        type: "vercel",
-        sandboxName: "session_session-1",
-      },
-      snapshotUrl: null,
-      lifecycleState: "hibernated",
-      sandboxExpiresAt: null,
-      hibernateAfter: null,
-    });
-    connectSandboxResumeError = new Error("Status code 404 is not ok");
 
     const response = await PUT(
       new Request("http://localhost/api/sandbox/snapshot", {
@@ -254,63 +197,9 @@ describe("/api/sandbox/snapshot", () => {
     );
     const payload = (await response.json()) as { error: string };
 
-    expect(response.status).toBe(404);
-    expect(payload.error).toContain("Saved sandbox is no longer available");
-    expect(updateCalls[0]).toEqual(
-      expect.objectContaining({
-        sandboxState: {
-          type: "vercel",
-        },
-        lifecycleState: "hibernated",
-      }),
+    expect(response.status).toBe(400);
+    expect(payload.error).toBe(
+      "Snapshot restoration is not supported for local sandboxes",
     );
-  });
-
-  test("PUT lazily migrates a legacy snapshot-backed session on first resume", async () => {
-    const { PUT } = await routeModulePromise;
-
-    sessionRecord = makeSessionRecord({
-      sandboxState: { type: "vercel" },
-      snapshotUrl: "snap-legacy-1",
-      lifecycleState: "hibernated",
-      sandboxExpiresAt: null,
-      hibernateAfter: null,
-    });
-
-    const response = await PUT(
-      new Request("http://localhost/api/sandbox/snapshot", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: "session-1" }),
-      }),
-    );
-
-    expect(response.ok).toBe(true);
-    expect(connectCalls[0]).toMatchObject({
-      state: {
-        type: "vercel",
-        sandboxName: "session_session-1",
-        snapshotId: "snap-legacy-1",
-      },
-      options: {
-        resume: true,
-        createIfMissing: true,
-        persistent: true,
-      },
-    });
-    expect(updateCalls[0]).toEqual(
-      expect.objectContaining({
-        sandboxState: expect.objectContaining({
-          type: "vercel",
-          sandboxName: "session_session-1",
-        }),
-        snapshotUrl: null,
-        snapshotCreatedAt: null,
-        lifecycleVersion: 3,
-      }),
-    );
-    expect(kickCalls).toEqual([
-      { sessionId: "session-1", reason: "snapshot-restored" },
-    ]);
   });
 });

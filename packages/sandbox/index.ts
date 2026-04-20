@@ -20,14 +20,5 @@ export {
   type SandboxConnectConfig,
 } from "./factory";
 
-// vercel
-export {
-  connectVercelSandbox,
-  VercelSandbox,
-  type VercelSandboxConfig,
-  type VercelSandboxConnectConfig,
-  type VercelState,
-} from "./vercel";
-
 // srt
 export { SrtSandbox, connectSrt, type SrtState } from "./srt";

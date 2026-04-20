@@ -25,7 +25,7 @@ const userOpusVariant: ModelVariant = {
 const basePreferences: UserPreferencesData = {
   defaultModelId: "anthropic/claude-opus-4.6",
   defaultSubagentModelId: "variant:builtin:claude-opus-4.6-high",
-  defaultSandboxType: "vercel",
+  defaultSandboxType: "srt",
   defaultDiffMode: "unified",
   autoCommitPush: false,
   autoCreatePr: false,

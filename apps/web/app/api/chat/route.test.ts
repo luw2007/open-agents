@@ -90,34 +90,25 @@ mock.module("ai", () => ({
   }) => new Response(stream, { status: 200, headers }),
 }));
 
-mock.module("workflow/api", () => ({
-  start: async (...args: unknown[]) => {
-    startCalls.push(args);
-    return {
-      runId: "wrun_test-123",
-      getReadable: () =>
-        new ReadableStream({
-          start(controller) {
-            controller.close();
-          },
-        }),
-    };
+mock.module("@/lib/workflow", () => ({
+  sendJob: async (_queue: string, data: unknown) => {
+    startCalls.push([data]);
+    return "job-test-123";
   },
-  getRun: () => {
-    if (getRunShouldThrow) {
-      throw new Error("Run not found");
-    }
-
-    return {
-      status: Promise.resolve(existingRunStatus),
-      getReadable: () =>
-        new ReadableStream({
-          start(controller) {
-            controller.close();
-          },
-        }),
-      cancel: () => Promise.resolve(),
-    };
+  getJobStatus: async () => {
+    if (getRunShouldThrow) throw new Error("Run not found");
+    return existingRunStatus;
+  },
+  cancelJob: async () => {},
+  subscribeJobStream: () =>
+    new ReadableStream({
+      start(controller) {
+        controller.close();
+      },
+    }),
+  JOB_QUEUES: {
+    CHAT_AGENT: "chat.agent",
+    DEV_TASK: "task.dev",
   },
 }));
 
@@ -192,20 +183,17 @@ mock.module("@/lib/sandbox/config", () => ({
   DEFAULT_SANDBOX_PORTS: [],
 }));
 
-mock.module("@/lib/sandbox/vercel-cli-auth", () => ({
-  getVercelCliSandboxSetup: async () => ({
-    auth: null,
-    projectLink: null,
-  }),
-  syncVercelCliAuthToSandbox: async () => {},
-}));
-
 mock.module("@/lib/sandbox/lifecycle", () => ({
   buildActiveLifecycleUpdate: () => ({}),
+  getNextLifecycleVersion: () => 1,
 }));
 
 mock.module("@/lib/sandbox/utils", () => ({
   isSandboxActive: () => isSandboxActive,
+}));
+
+mock.module("@/lib/sandbox/ensure-session-sandbox", () => ({
+  ensureSessionSandbox: async () => ({ type: "srt", workdir: "/tmp/test" }),
 }));
 
 mock.module("@/lib/session/get-server-session", () => ({
@@ -307,14 +295,15 @@ describe("/api/chat route", () => {
 
     expect(response.ok).toBe(true);
     expect(startCalls).toHaveLength(1);
-    expect(startCalls[0]?.[1]).toEqual([
+    const jobData = startCalls[0]?.[0] as Record<string, unknown>;
+    expect(jobData?.options).toEqual(
       expect.objectContaining({
         maxSteps: 500,
         agentOptions: expect.objectContaining({
           customInstructions: assistantFileLinkPrompt,
         }),
       }),
-    ]);
+    );
   });
 
   test("passes selected and resolved model ids to the workflow", async () => {
@@ -337,12 +326,13 @@ describe("/api/chat route", () => {
 
     expect(response.ok).toBe(true);
     expect(startCalls).toHaveLength(1);
-    expect(startCalls[0]?.[1]).toEqual([
+    const jobData = startCalls[0]?.[0] as Record<string, unknown>;
+    expect(jobData?.options).toEqual(
       expect.objectContaining({
         selectedModelId: "variant:test-model",
         modelId: "openai/gpt-5",
       }),
-    ]);
+    );
   });
 
   test("discovers global sandbox skills after repo-local skill directories", async () => {
@@ -368,12 +358,13 @@ describe("/api/chat route", () => {
 
     expect(response.ok).toBe(true);
     expect(startCalls).toHaveLength(1);
-    expect(startCalls[0]?.[1]).toEqual([
+    const jobData = startCalls[0]?.[0] as Record<string, unknown>;
+    expect(jobData?.options).toEqual(
       expect.objectContaining({
         autoCommitEnabled: true,
         autoCreatePrEnabled: true,
       }),
-    ]);
+    );
   });
 
   test("keeps auto PR enabled when the session already has PR metadata", async () => {
@@ -388,12 +379,13 @@ describe("/api/chat route", () => {
 
     expect(response.ok).toBe(true);
     expect(startCalls).toHaveLength(1);
-    expect(startCalls[0]?.[1]).toEqual([
+    const jobData = startCalls[0]?.[0] as Record<string, unknown>;
+    expect(jobData?.options).toEqual(
       expect.objectContaining({
         autoCommitEnabled: true,
         autoCreatePrEnabled: true,
       }),
-    ]);
+    );
   });
 
   test("does not enable auto PR when auto commit is disabled", async () => {
@@ -405,11 +397,12 @@ describe("/api/chat route", () => {
 
     expect(response.ok).toBe(true);
     expect(startCalls).toHaveLength(1);
-    expect(startCalls[0]?.[1]).toEqual([
+    const jobData = startCalls[0]?.[0] as Record<string, unknown>;
+    expect(jobData?.options).toEqual(
       expect.not.objectContaining({
         autoCommitEnabled: true,
       }),
-    ]);
+    );
   });
 
   test("returns 401 when not authenticated", async () => {
@@ -523,13 +516,15 @@ describe("/api/chat route", () => {
     const response = await POST(createValidRequest());
 
     expect(response.ok).toBe(true);
-    expect(response.headers.get("x-workflow-run-id")).toBe("wrun_test-123");
+    const runId = response.headers.get("x-workflow-run-id");
+    expect(runId).toBeTruthy();
+    expect(runId).not.toBe("wrun_old-789");
 
     const compareAndSetCalls = compareAndSetChatActiveStreamIdSpy.mock
       .calls as unknown[][];
     expect(compareAndSetCalls).toEqual([
       ["chat-1", "wrun_old-789", null],
-      ["chat-1", null, "wrun_test-123"],
+      ["chat-1", null, runId],
     ]);
   });
 
@@ -543,13 +538,15 @@ describe("/api/chat route", () => {
     const response = await POST(createValidRequest());
 
     expect(response.ok).toBe(true);
-    expect(response.headers.get("x-workflow-run-id")).toBe("wrun_test-123");
+    const runId = response.headers.get("x-workflow-run-id");
+    expect(runId).toBeTruthy();
+    expect(runId).not.toBe("wrun_missing-789");
 
     const compareAndSetCalls = compareAndSetChatActiveStreamIdSpy.mock
       .calls as unknown[][];
     expect(compareAndSetCalls).toEqual([
       ["chat-1", "wrun_missing-789", null],
-      ["chat-1", null, "wrun_test-123"],
+      ["chat-1", null, runId],
     ]);
   });
 
@@ -571,7 +568,12 @@ describe("/api/chat route", () => {
     const response = await POST(createValidRequest());
 
     expect(response.ok).toBe(true);
-    expect(response.headers.get("x-workflow-run-id")).toBe("wrun_test-123");
+    const runId = response.headers.get("x-workflow-run-id");
+    expect(runId).toBeTruthy();
+    // UUID v4 格式
+    expect(runId).toMatch(
+      /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/,
+    );
   });
 
   test("calls persistAssistantMessagesWithToolResults on submit", async () => {

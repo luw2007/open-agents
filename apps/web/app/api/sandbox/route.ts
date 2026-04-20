@@ -10,83 +10,24 @@ import { getGitHubAccount } from "@/lib/db/accounts";
 import { updateSession } from "@/lib/db/sessions";
 import { parseGitHubUrl } from "@/lib/github/client";
 import { getUserGitHubToken } from "@/lib/github/user-token";
-import {
-  DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
-  DEFAULT_SANDBOX_PORTS,
-  DEFAULT_SANDBOX_TIMEOUT_MS,
-} from "@/lib/sandbox/config";
+import { DEFAULT_SANDBOX_TIMEOUT_MS } from "@/lib/sandbox/config";
 import {
   buildActiveLifecycleUpdate,
   getNextLifecycleVersion,
 } from "@/lib/sandbox/lifecycle";
-import { kickSandboxLifecycleWorkflow } from "@/lib/sandbox/lifecycle-kick";
-import {
-  getVercelCliSandboxSetup,
-  syncVercelCliAuthToSandbox,
-} from "@/lib/sandbox/vercel-cli-auth";
 import { installGlobalSkills } from "@/lib/skills/global-skill-installer";
 import {
   canOperateOnSandbox,
   clearSandboxState,
-  getSessionSandboxName,
   hasResumableSandboxState,
 } from "@/lib/sandbox/utils";
 import { getServerSession } from "@/lib/session/get-server-session";
-// import { buildDevelopmentDotenvFromVercelProject } from "@/lib/vercel/projects";
-// import { getUserVercelToken } from "@/lib/vercel/token";
 
 interface CreateSandboxRequest {
   repoUrl?: string;
   branch?: string;
   isNewBranch?: boolean;
   sessionId?: string;
-  sandboxType?: "vercel";
-}
-
-// async function syncVercelProjectEnvVarsToSandbox(params: {
-//   userId: string;
-//   sessionRecord: SessionRecord;
-//   sandbox: Awaited<ReturnType<typeof connectSandbox>>;
-// }): Promise<void> {
-//   if (!params.sessionRecord.vercelProjectId) {
-//     return;
-//   }
-//
-//   const token = await getUserVercelToken(params.userId);
-//   if (!token) {
-//     return;
-//   }
-//
-//   const dotenvContent = await buildDevelopmentDotenvFromVercelProject({
-//     token,
-//     projectIdOrName: params.sessionRecord.vercelProjectId,
-//     teamId: params.sessionRecord.vercelTeamId,
-//   });
-//   if (!dotenvContent) {
-//     return;
-//   }
-//
-//   await params.sandbox.writeFile(
-//     `${params.sandbox.workingDirectory}/.env.local`,
-//     dotenvContent,
-//     "utf-8",
-//   );
-// }
-
-async function syncVercelCliAuthForSandbox(params: {
-  userId: string;
-  sessionRecord: SessionRecord;
-  sandbox: Awaited<ReturnType<typeof connectSandbox>>;
-}): Promise<void> {
-  const setup = await getVercelCliSandboxSetup({
-    userId: params.userId,
-    sessionRecord: params.sessionRecord,
-  });
-
-  await syncVercelCliAuthToSandbox({
-    sandbox: params.sandbox,
-    setup,
-  });
 }
 
 async function installSessionGlobalSkills(params: {
@@ -110,10 +51,6 @@ export async function POST(req: Request) {
     body = (await req.json()) as CreateSandboxRequest;
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
-
-  if (body.sandboxType && body.sandboxType !== "vercel") {
-    return Response.json({ error: "Invalid sandbox type" }, { status: 400 });
   }
 
   const { repoUrl, branch = "main", isNewBranch = false, sessionId } = body;
@@ -162,7 +99,6 @@ export async function POST(req: Request) {
     sessionRecord = sessionContext.sessionRecord;
   }
 
-  const sandboxName = sessionId ? getSessionSandboxName(sessionId) : undefined;
   const githubAccount = await getGitHubAccount(session.user.id);
   const githubNoreplyEmail =
     githubAccount?.externalUserId && githubAccount.username
@@ -177,6 +113,8 @@ export async function POST(req: Request) {
       `${session.user.username}@users.noreply.github.com`,
   };
 
+  const effectiveSandboxType = "srt";
+
   // ============================================
   // CREATE OR RESUME: Create a named persistent sandbox for this session.
   // ============================================
@@ -190,21 +128,21 @@ export async function POST(req: Request) {
       }
     : undefined;
 
+  // SRT 本地进程沙箱：使用 /tmp 下的隔离工作目录
+  const workdir = sessionId
+    ? `/tmp/open-agents-sandbox/${sessionId}`
+    : `/tmp/open-agents-sandbox/${Date.now()}`;
+
   const sandbox = await connectSandbox({
     state: {
-      type: "vercel",
-      ...(sandboxName ? { sandboxName } : {}),
+      type: "srt",
+      workdir,
       source,
     },
     options: {
       githubToken: githubToken ?? undefined,
       gitUser,
       timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
-      ports: DEFAULT_SANDBOX_PORTS,
-      baseSnapshotId: DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
-      persistent: !!sandboxName,
-      resume: !!sandboxName,
-      createIfMissing: !!sandboxName,
     },
   });
 
@@ -221,33 +159,6 @@ export async function POST(req: Request) {
     });
 
     if (sessionRecord) {
-      // TODO: Re-enable this once we have a solid exfiltration defense strategy.
-      // try {
-      //   await syncVercelProjectEnvVarsToSandbox({
-      //     userId: session.user.id,
-      //     sessionRecord,
-      //     sandbox,
-      //   });
-      // } catch (error) {
-      //   console.error(
-      //     `Failed to sync Vercel env vars for session ${sessionRecord.id}:`,
-      //     error,
-      //   );
-      // }
-
-      try {
-        await syncVercelCliAuthForSandbox({
-          userId: session.user.id,
-          sessionRecord,
-          sandbox,
-        });
-      } catch (error) {
-        console.error(
-          `Failed to prepare Vercel CLI auth for session ${sessionRecord.id}:`,
-          error,
-        );
-      }
-
       try {
         await installSessionGlobalSkills({
           sessionRecord,
@@ -260,11 +171,6 @@ export async function POST(req: Request) {
         );
       }
     }
-
-    kickSandboxLifecycleWorkflow({
-      sessionId,
-      reason: "sandbox-created",
-    });
   }
 
   const readyMs = Date.now() - startTime;
@@ -273,7 +179,7 @@ export async function POST(req: Request) {
     createdAt: Date.now(),
     timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
     currentBranch: repoUrl ? branch : undefined,
-    mode: "vercel",
+    mode: effectiveSandboxType,
     timing: { readyMs },
   });
 }

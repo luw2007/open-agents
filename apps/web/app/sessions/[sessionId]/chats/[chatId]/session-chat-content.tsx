@@ -2806,9 +2806,7 @@ export function SessionChatContent({
     gitStatus?.branch && gitStatus.branch !== "HEAD"
       ? gitStatus.branch
       : session.branch;
-  const hasBranchPreviewLookup = Boolean(
-    session.vercelProjectId && previewLookupBranch,
-  );
+  const hasBranchPreviewLookup = false;
   const existingPrUrl =
     hasExistingPr && session.repoOwner && session.repoName
       ? `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`

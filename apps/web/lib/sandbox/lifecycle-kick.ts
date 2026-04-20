@@ -71,9 +71,7 @@ function shouldStartLifecycle(
   if (!canOperateOnSandbox(session.sandboxState)) {
     return false;
   }
-  if (session.sandboxState.type !== "vercel") {
-    return false;
-  }
+
   if (session.lifecycleRunId) {
     return false;
   }

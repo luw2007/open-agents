@@ -15,7 +15,7 @@ const baseTask: TaskContext = {
   slug: "add-user-registration",
   prd: "实现用户注册 API，包含邮箱验证。",
   priority: "P1",
-  sandboxState: { type: "vercel", sandboxName: "sbx-1" } as SandboxState,
+  sandboxState: { type: "srt", workdir: "/tmp/test" } as SandboxState,
   workingDirectory: "/vercel/sandbox",
 };
 

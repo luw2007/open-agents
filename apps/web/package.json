@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "bun run db:migrate:apply && next build",
+    "build": "next build",
     "db:migrate:apply": "bun run lib/db/migrate.ts",
     "start": "next start",
     "typecheck": "tsc --noEmit",

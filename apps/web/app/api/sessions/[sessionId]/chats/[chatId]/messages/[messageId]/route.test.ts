@@ -72,12 +72,8 @@ mock.module("@/lib/db/sessions", () => ({
   updateChatActiveStreamId: async () => {},
 }));
 
-mock.module("workflow/api", () => ({
-  getRun: () => ({
-    get status() {
-      return Promise.resolve(mockWorkflowStatus);
-    },
-  }),
+mock.module("@/lib/workflow", () => ({
+  getJobStatus: async () => mockWorkflowStatus,
 }));
 
 mock.module("@/lib/session/get-server-session", () => ({

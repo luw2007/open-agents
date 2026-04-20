@@ -2,8 +2,6 @@ import type { Sandbox, SandboxHooks } from "./interface";
 import { connectSrt } from "./srt/connect";
 import type { SrtState } from "./srt/state";
 import type { SandboxStatus } from "./types";
-import { connectVercel } from "./vercel/connect";
-import type { VercelState } from "./vercel/state";
 
 // Re-export SandboxStatus from types for convenience
 export type { SandboxStatus };
@@ -12,9 +10,7 @@ export type { SandboxStatus };
  * 统一沙箱状态类型。
  * 使用 `type` 判别字段确定使用哪个沙箱实现。
  */
-export type SandboxState =
-  | ({ type: "vercel" } & VercelState)
-  | ({ type: "srt" } & SrtState);
+export type SandboxState = { type: "srt" } & SrtState;
 
 /**
  * Base connect options for all sandbox types.
@@ -77,15 +73,9 @@ export async function connectSandbox(
     : legacyOptions;
 
   switch (state.type) {
-    case "vercel":
-      return connectVercel(state, options);
     case "srt":
       return connectSrt(state, options);
-    default: {
-      const _exhaustive: never = state;
-      throw new Error(
-        `未知的沙箱类型: ${(_exhaustive as { type: string }).type}`,
-      );
-    }
+    default:
+      throw new Error(`未知的沙箱类型: ${(state as { type: string }).type}`);
   }
 }

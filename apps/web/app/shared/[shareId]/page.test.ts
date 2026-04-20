@@ -89,7 +89,7 @@ mock.module("@/lib/db/user-preferences", () => ({
   getUserPreferences: async () => ({
     defaultModelId: "anthropic/claude-opus-4.6",
     defaultSubagentModelId: null,
-    defaultSandboxType: "vercel",
+    defaultSandboxType: "srt",
     defaultDiffMode: "unified",
     autoCommitPush: false,
     modelVariants: userModelVariants,

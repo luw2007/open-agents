@@ -1,7 +1,6 @@
 // apps/web/app/api/tasks/[taskId]/resume/route.ts
 // POST /api/tasks/:taskId/resume — 恢复失败/暂停的 task workflow
 import type { SandboxState } from "@open-harness/sandbox";
-import { gateway } from "ai";
 import { sendJob, JOB_QUEUES } from "@/lib/workflow";
 import { getServerSession } from "@/lib/session/get-server-session";
 import { getTaskById, updateTask } from "@/lib/db/tasks";
@@ -55,8 +54,8 @@ export async function POST(_req: Request, context: RouteContext) {
     completedAt: null,
   });
 
-  const model = gateway(APP_DEFAULT_MODEL_ID);
-
+  const workingDirectory =
+    sandboxState.type === "srt" ? sandboxState.workdir : "/vercel/sandbox";
   const runId = crypto.randomUUID();
   await sendJob(JOB_QUEUES.DEV_TASK, {
     runId,
@@ -67,9 +66,9 @@ export async function POST(_req: Request, context: RouteContext) {
       prd: task.prd,
       priority: task.priority ?? "P2",
       sandboxState,
-      workingDirectory: "/vercel/sandbox",
+      workingDirectory,
       verifyCommands: task.verifyCommands ?? undefined,
-      model,
+      modelId: APP_DEFAULT_MODEL_ID,
     },
   });
 

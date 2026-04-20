@@ -13,27 +13,24 @@ const exampleSkills: SkillMetadata[] = [
 ];
 
 describe("skills cache", () => {
-  test("derives cache keys from sandbox name, legacy snapshot id, or local scope", () => {
+  test("derives cache key using session id and local scope for srt sandbox", () => {
     expect(
       getSkillsCacheKey("session-1", {
-        type: "vercel",
-        sandboxName: "session_session-1",
-        snapshotId: "snap-123",
-      }),
-    ).toBe("skills:v1:session-1:session_session-1");
-
-    expect(
-      getSkillsCacheKey("session-1", {
-        type: "vercel",
-        snapshotId: "snap-123",
-      }),
-    ).toBe("skills:v1:session-1:snap-123");
-
-    expect(
-      getSkillsCacheKey("session-1", {
-        type: "vercel",
+        type: "srt",
+        workdir: "/tmp/session-1",
       }),
     ).toBe("skills:v1:session-1:local");
+
+    expect(
+      getSkillsCacheKey("session-1", {
+        type: "srt",
+        workdir: "/tmp/other",
+      }),
+    ).toBe("skills:v1:session-1:local");
+
+    expect(getSkillsCacheKey("session-1", null)).toBe(
+      "skills:v1:session-1:local",
+    );
   });
 
   test("caches empty skill arrays in the in-memory fallback until TTL expires", async () => {
@@ -43,7 +40,7 @@ describe("skills cache", () => {
       now: () => nowMs,
       getRedisClient: () => null,
     });
-    const sandboxState = { type: "vercel" as const };
+    const sandboxState = { type: "srt" as const, workdir: "/tmp/test" };
 
     await cache.set("session-1", sandboxState, []);
 
@@ -76,8 +73,8 @@ describe("skills cache", () => {
       },
     });
     const sandboxState = {
-      type: "vercel" as const,
-      sandboxName: "session_session-1",
+      type: "srt" as const,
+      workdir: "/tmp/test",
     };
 
     await cache.set("session-1", sandboxState, exampleSkills);

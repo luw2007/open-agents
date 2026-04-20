@@ -13,7 +13,7 @@ describe("toUserPreferencesData", () => {
     expect(toUserPreferencesData()).toEqual({
       defaultModelId: "openai/gpt-5.4",
       defaultSubagentModelId: null,
-      defaultSandboxType: "vercel",
+      defaultSandboxType: "srt",
       defaultDiffMode: "unified",
       autoCommitPush: false,
       autoCreatePr: false,
@@ -44,7 +44,7 @@ describe("toUserPreferencesData", () => {
       enabledModelIds: [],
     });
 
-    expect(result.defaultSandboxType).toBe("vercel");
+    expect(result.defaultSandboxType).toBe("srt");
     expect(result.defaultDiffMode).toBe("unified");
   });
 
@@ -66,7 +66,7 @@ describe("toUserPreferencesData", () => {
       enabledModelIds: [],
     });
 
-    expect(result.defaultSandboxType).toBe("vercel");
+    expect(result.defaultSandboxType).toBe("srt");
     expect(result.defaultDiffMode).toBe("unified");
   });
 
@@ -76,7 +76,7 @@ describe("toUserPreferencesData", () => {
     const result = toUserPreferencesData({
       defaultModelId: "openai/gpt-5",
       defaultSubagentModelId: null,
-      defaultSandboxType: "vercel",
+      defaultSandboxType: "srt",
       defaultDiffMode: "split",
       autoCommitPush: false,
       autoCreatePr: false,
@@ -99,7 +99,7 @@ describe("toUserPreferencesData", () => {
     const result = toUserPreferencesData({
       defaultModelId: "openai/gpt-5",
       defaultSubagentModelId: null,
-      defaultSandboxType: "vercel",
+      defaultSandboxType: "srt",
       defaultDiffMode: "split",
       autoCommitPush: false,
       autoCreatePr: false,
@@ -125,7 +125,7 @@ describe("toUserPreferencesData", () => {
     const result = toUserPreferencesData({
       defaultModelId: "openai/gpt-5",
       defaultSubagentModelId: null,
-      defaultSandboxType: "vercel",
+      defaultSandboxType: "srt",
       defaultDiffMode: "split",
       autoCommitPush: false,
       autoCreatePr: false,
@@ -146,7 +146,7 @@ describe("toUserPreferencesData", () => {
     const result = toUserPreferencesData({
       defaultModelId: "openai/gpt-5",
       defaultSubagentModelId: null,
-      defaultSandboxType: "vercel",
+      defaultSandboxType: "srt",
       defaultDiffMode: "split",
       autoCommitPush: true,
       autoCreatePr: true,
@@ -168,7 +168,7 @@ describe("toUserPreferencesData", () => {
     expect(result).toEqual({
       defaultModelId: "openai/gpt-5",
       defaultSubagentModelId: null,
-      defaultSandboxType: "vercel",
+      defaultSandboxType: "srt",
       defaultDiffMode: "split",
       autoCommitPush: true,
       autoCreatePr: true,
@@ -194,7 +194,7 @@ describe("toUserPreferencesData", () => {
     const result = toUserPreferencesData({
       defaultModelId: "openai/gpt-5",
       defaultSubagentModelId: null,
-      defaultSandboxType: "vercel",
+      defaultSandboxType: "srt",
       defaultDiffMode: "split",
       autoCommitPush: false,
       autoCreatePr: false,

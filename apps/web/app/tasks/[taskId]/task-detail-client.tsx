@@ -10,7 +10,8 @@ import {
   XCircle,
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import type { Task, TaskNodeRun } from "@/lib/db/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,6 +35,14 @@ export function TaskDetailClient({
     task.status === "verifying";
   const stream = useTaskStream(isActive ? task.id : null);
   const [isRetrying, setIsRetrying] = useState(false);
+  const router = useRouter();
+
+  // SSE 收到 task_completed 或 error 时自动刷新页面数据
+  useEffect(() => {
+    if (stream.isCompleted) {
+      router.refresh();
+    }
+  }, [stream.isCompleted, router]);
 
   async function handleRetry() {
     setIsRetrying(true);

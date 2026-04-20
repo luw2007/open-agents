@@ -1,308 +1,163 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
-const currentSessionRecord = {
-  userId: "user-1",
-  repoOwner: "vercel",
-  repoName: "open-harness",
-  branch: "feature/preview",
-  vercelProjectId: "project-1",
-  vercelTeamId: "team-1",
-  prNumber: null as number | null,
-};
+mock.module("server-only", () => ({}));
 
-let currentVercelToken: string | null = "vercel-token";
-let currentBranchDeploymentUrl: string | null = null;
-let currentBuildingDeploymentUrl: string | null = null;
-let currentFailedDeploymentInspectorUrl: string | null = null;
-let currentPullRequestDeploymentResult: {
-  success: boolean;
-  deploymentUrl?: string | null;
-} = {
-  success: false,
-};
-
-const getUserVercelTokenMock = mock(async () => currentVercelToken);
-const findLatestPreviewDeploymentUrlForBranchMock = mock(
-  async () => currentBranchDeploymentUrl,
+const mockRequireAuthenticatedUser = mock(() =>
+  Promise.resolve({ ok: true as const, userId: "user-1" }),
 );
-const findLatestBuildingDeploymentUrlForBranchMock = mock(
-  async () => currentBuildingDeploymentUrl,
+const mockRequireOwnedSession = mock(
+  (): Promise<{
+    ok: true;
+    sessionRecord: {
+      repoOwner: string;
+      repoName: string;
+      prNumber: number | null;
+      repoBranch: string;
+    };
+  }> =>
+    Promise.resolve({
+      ok: true as const,
+      sessionRecord: {
+        repoOwner: "owner",
+        repoName: "repo",
+        prNumber: 42,
+        repoBranch: "feat-branch",
+      },
+    }),
 );
-const findLatestFailedDeploymentInspectorUrlForBranchMock = mock(
-  async () => currentFailedDeploymentInspectorUrl,
+const mockGetUserGitHubToken = mock(
+  (): Promise<string | null> => Promise.resolve("gh-token-123"),
 );
-const getUserGitHubTokenMock = mock(async () => "repo-token");
-const findLatestVercelDeploymentUrlForPullRequestMock = mock(
-  async () => currentPullRequestDeploymentResult,
+const mockFindLatestVercelDeploymentUrlForPullRequest = mock(
+  (): Promise<{ success: boolean; deploymentUrl?: string | null }> =>
+    Promise.resolve({
+      success: true,
+      deploymentUrl: "https://deploy.vercel.app",
+    }),
 );
 
 mock.module("@/app/api/sessions/_lib/session-context", () => ({
-  requireAuthenticatedUser: async () => ({
-    ok: true,
-    userId: "user-1",
-  }),
-  requireOwnedSession: async () => ({
-    ok: true,
-    sessionRecord: currentSessionRecord,
-  }),
-}));
-
-mock.module("@/lib/vercel/token", () => ({
-  getUserVercelToken: getUserVercelTokenMock,
-}));
-
-mock.module("@/lib/vercel/projects", () => ({
-  findLatestPreviewDeploymentUrlForBranch:
-    findLatestPreviewDeploymentUrlForBranchMock,
-  findLatestBuildingDeploymentUrlForBranch:
-    findLatestBuildingDeploymentUrlForBranchMock,
-  findLatestFailedDeploymentInspectorUrlForBranch:
-    findLatestFailedDeploymentInspectorUrlForBranchMock,
+  requireAuthenticatedUser: mockRequireAuthenticatedUser,
+  requireOwnedSession: mockRequireOwnedSession,
 }));
 
 mock.module("@/lib/github/user-token", () => ({
-  getUserGitHubToken: getUserGitHubTokenMock,
+  getUserGitHubToken: mockGetUserGitHubToken,
 }));
 
 mock.module("@/lib/github/client", () => ({
   findLatestVercelDeploymentUrlForPullRequest:
-    findLatestVercelDeploymentUrlForPullRequestMock,
+    mockFindLatestVercelDeploymentUrlForPullRequest,
 }));
 
-const routeModulePromise = import("./route");
+const { GET } = await import("./route");
 
-function createRouteContext(sessionId = "session-1") {
-  return {
-    params: Promise.resolve({ sessionId }),
-  };
+const sessionId = "session-123";
+
+function makeRequest(prNumber?: number | string) {
+  const url =
+    prNumber !== undefined
+      ? `http://localhost/api/sessions/${sessionId}/pr-deployment?prNumber=${prNumber}`
+      : `http://localhost/api/sessions/${sessionId}/pr-deployment`;
+  return new Request(url);
 }
 
-describe("/api/sessions/[sessionId]/pr-deployment", () => {
+function makeContext() {
+  return { params: Promise.resolve({ sessionId }) };
+}
+
+describe("GET /api/sessions/[sessionId]/pr-deployment", () => {
   beforeEach(() => {
-    currentSessionRecord.repoOwner = "vercel";
-    currentSessionRecord.repoName = "open-harness";
-    currentSessionRecord.branch = "feature/preview";
-    currentSessionRecord.vercelProjectId = "project-1";
-    currentSessionRecord.vercelTeamId = "team-1";
-    currentSessionRecord.prNumber = null;
-    currentVercelToken = "vercel-token";
-    currentBranchDeploymentUrl = null;
-    currentBuildingDeploymentUrl = null;
-    currentFailedDeploymentInspectorUrl = null;
-    currentPullRequestDeploymentResult = { success: false };
-    getUserVercelTokenMock.mockClear();
-    findLatestPreviewDeploymentUrlForBranchMock.mockClear();
-    findLatestBuildingDeploymentUrlForBranchMock.mockClear();
-    findLatestFailedDeploymentInspectorUrlForBranchMock.mockClear();
-    getUserGitHubTokenMock.mockClear();
-    findLatestVercelDeploymentUrlForPullRequestMock.mockClear();
-  });
+    mockRequireAuthenticatedUser.mockReset();
+    mockRequireOwnedSession.mockReset();
+    mockGetUserGitHubToken.mockReset();
+    mockFindLatestVercelDeploymentUrlForPullRequest.mockReset();
 
-  test("returns the latest branch preview directly from Vercel without requiring a PR", async () => {
-    const { GET } = await routeModulePromise;
-
-    currentBranchDeploymentUrl = "https://project-preview.vercel.app";
-
-    const response = await GET(
-      new Request("http://localhost/api/sessions/session-1/pr-deployment"),
-      createRouteContext(),
-    );
-    const body = (await response.json()) as { deploymentUrl: string | null };
-
-    expect(response.status).toBe(200);
-    expect(body.deploymentUrl).toBe("https://project-preview.vercel.app");
-    expect(getUserVercelTokenMock).toHaveBeenCalledTimes(1);
-    expect(findLatestPreviewDeploymentUrlForBranchMock).toHaveBeenCalledWith({
-      token: "vercel-token",
-      projectIdOrName: "project-1",
-      branch: "feature/preview",
-      teamId: "team-1",
+    mockRequireAuthenticatedUser.mockResolvedValue({
+      ok: true as const,
+      userId: "user-1",
     });
-    expect(getUserGitHubTokenMock).toHaveBeenCalledTimes(0);
-    expect(
-      findLatestVercelDeploymentUrlForPullRequestMock,
-    ).toHaveBeenCalledTimes(0);
+    mockRequireOwnedSession.mockResolvedValue({
+      ok: true as const,
+      sessionRecord: {
+        repoOwner: "owner",
+        repoName: "repo",
+        prNumber: 42,
+        repoBranch: "feat-branch",
+      },
+    });
+    mockGetUserGitHubToken.mockResolvedValue("gh-token-123");
+    mockFindLatestVercelDeploymentUrlForPullRequest.mockResolvedValue({
+      success: true as const,
+      deploymentUrl: "https://deploy.vercel.app",
+    });
   });
 
-  test("returns buildingDeploymentUrl when a deployment is still building", async () => {
-    const { GET } = await routeModulePromise;
+  test("returns null deploymentUrl when session has no PR number", async () => {
+    mockRequireOwnedSession.mockResolvedValue({
+      ok: true as const,
+      sessionRecord: {
+        repoOwner: "owner",
+        repoName: "repo",
+        prNumber: null,
+        repoBranch: "feat-branch",
+      },
+    });
 
-    currentBranchDeploymentUrl = "https://project-preview.vercel.app";
-    currentBuildingDeploymentUrl = "https://project-building.vercel.app";
+    const res = await GET(makeRequest(), makeContext());
+    const body = await res.json();
 
-    const response = await GET(
-      new Request("http://localhost/api/sessions/session-1/pr-deployment"),
-      createRouteContext(),
-    );
-    const body = (await response.json()) as {
-      deploymentUrl: string | null;
-      buildingDeploymentUrl: string | null;
-    };
-
-    expect(response.status).toBe(200);
-    expect(body.deploymentUrl).toBe("https://project-preview.vercel.app");
-    expect(body.buildingDeploymentUrl).toBe(
-      "https://project-building.vercel.app",
-    );
-  });
-
-  test("returns buildingDeploymentUrl even when no ready deployment exists yet", async () => {
-    const { GET } = await routeModulePromise;
-
-    currentBranchDeploymentUrl = null;
-    currentBuildingDeploymentUrl = "https://project-building.vercel.app";
-
-    const response = await GET(
-      new Request("http://localhost/api/sessions/session-1/pr-deployment"),
-      createRouteContext(),
-    );
-    const body = (await response.json()) as {
-      deploymentUrl: string | null;
-      buildingDeploymentUrl: string | null;
-    };
-
-    expect(response.status).toBe(200);
     expect(body.deploymentUrl).toBeNull();
-    expect(body.buildingDeploymentUrl).toBe(
-      "https://project-building.vercel.app",
-    );
-  });
-
-  test("uses the requested branch for preview lookup so freshly-created branches resolve immediately", async () => {
-    const { GET } = await routeModulePromise;
-
-    currentSessionRecord.branch = "main";
-    currentBranchDeploymentUrl = "https://project-preview.vercel.app";
-
-    const response = await GET(
-      new Request(
-        "http://localhost/api/sessions/session-1/pr-deployment?branch=feature/fresh-preview",
-      ),
-      createRouteContext(),
-    );
-    const body = (await response.json()) as { deploymentUrl: string | null };
-
-    expect(response.status).toBe(200);
-    expect(body.deploymentUrl).toBe("https://project-preview.vercel.app");
-    expect(findLatestPreviewDeploymentUrlForBranchMock).toHaveBeenCalledWith({
-      token: "vercel-token",
-      projectIdOrName: "project-1",
-      branch: "feature/fresh-preview",
-      teamId: "team-1",
-    });
-  });
-
-  test("uses the PR-based lookup directly when the session already has a PR", async () => {
-    const { GET } = await routeModulePromise;
-
-    currentSessionRecord.prNumber = 42;
-    currentBranchDeploymentUrl = "https://branch-preview.vercel.app";
-    currentPullRequestDeploymentResult = {
-      success: true,
-      deploymentUrl: "https://pr-preview.vercel.app",
-    };
-
-    const response = await GET(
-      new Request(
-        "http://localhost/api/sessions/session-1/pr-deployment?prNumber=42&branch=feature/preview",
-      ),
-      createRouteContext(),
-    );
-    const body = (await response.json()) as { deploymentUrl: string | null };
-
-    expect(response.status).toBe(200);
-    expect(body.deploymentUrl).toBe("https://pr-preview.vercel.app");
-    expect(findLatestPreviewDeploymentUrlForBranchMock).toHaveBeenCalledTimes(
-      0,
-    );
-    expect(getUserGitHubTokenMock).toHaveBeenCalledTimes(1);
     expect(
-      findLatestVercelDeploymentUrlForPullRequestMock,
+      mockFindLatestVercelDeploymentUrlForPullRequest,
+    ).not.toHaveBeenCalled();
+  });
+
+  test("returns deployment URL from GitHub PR check when session has a PR", async () => {
+    const res = await GET(makeRequest(42), makeContext());
+    const body = await res.json();
+
+    expect(body.deploymentUrl).toBe("https://deploy.vercel.app");
+    expect(
+      mockFindLatestVercelDeploymentUrlForPullRequest,
     ).toHaveBeenCalledWith({
-      owner: "vercel",
-      repo: "open-harness",
+      owner: "owner",
+      repo: "repo",
       prNumber: 42,
-      token: "repo-token",
+      token: "gh-token-123",
     });
   });
 
-  test("returns failedDeploymentUrl when only a failed deployment exists", async () => {
-    const { GET } = await routeModulePromise;
+  test("returns null when PR deployment lookup fails (success: false)", async () => {
+    mockFindLatestVercelDeploymentUrlForPullRequest.mockResolvedValue({
+      success: false as const,
+    });
 
-    currentBranchDeploymentUrl = null;
-    currentBuildingDeploymentUrl = null;
-    currentFailedDeploymentInspectorUrl =
-      "https://vercel.com/team/project/dpl_failed123";
+    const res = await GET(makeRequest(42), makeContext());
+    const body = await res.json();
 
-    const response = await GET(
-      new Request("http://localhost/api/sessions/session-1/pr-deployment"),
-      createRouteContext(),
-    );
-    const body = (await response.json()) as {
-      deploymentUrl: string | null;
-      buildingDeploymentUrl: string | null;
-      failedDeploymentUrl: string | null;
-    };
-
-    expect(response.status).toBe(200);
     expect(body.deploymentUrl).toBeNull();
-    expect(body.buildingDeploymentUrl).toBeNull();
-    expect(body.failedDeploymentUrl).toBe(
-      "https://vercel.com/team/project/dpl_failed123",
-    );
   });
 
-  test("returns failedDeploymentUrl alongside a ready deployment", async () => {
-    const { GET } = await routeModulePromise;
+  test("returns null when GitHub token is unavailable", async () => {
+    mockGetUserGitHubToken.mockResolvedValue(null);
 
-    currentBranchDeploymentUrl = "https://project-preview.vercel.app";
-    currentBuildingDeploymentUrl = null;
-    currentFailedDeploymentInspectorUrl =
-      "https://vercel.com/team/project/dpl_failed456";
+    const res = await GET(makeRequest(42), makeContext());
+    const body = await res.json();
 
-    const response = await GET(
-      new Request("http://localhost/api/sessions/session-1/pr-deployment"),
-      createRouteContext(),
-    );
-    const body = (await response.json()) as {
-      deploymentUrl: string | null;
-      failedDeploymentUrl: string | null;
-    };
-
-    expect(response.status).toBe(200);
-    expect(body.deploymentUrl).toBe("https://project-preview.vercel.app");
-    expect(body.failedDeploymentUrl).toBe(
-      "https://vercel.com/team/project/dpl_failed456",
-    );
-  });
-
-  test("does not return failedDeploymentUrl for PR-based lookups", async () => {
-    const { GET } = await routeModulePromise;
-
-    currentSessionRecord.prNumber = 42;
-    currentFailedDeploymentInspectorUrl =
-      "https://vercel.com/team/project/dpl_failed789";
-    currentPullRequestDeploymentResult = {
-      success: true,
-      deploymentUrl: "https://pr-preview.vercel.app",
-    };
-
-    const response = await GET(
-      new Request(
-        "http://localhost/api/sessions/session-1/pr-deployment?prNumber=42&branch=feature/preview",
-      ),
-      createRouteContext(),
-    );
-    const body = (await response.json()) as {
-      deploymentUrl: string | null;
-      failedDeploymentUrl?: string | null;
-    };
-
-    expect(response.status).toBe(200);
-    expect(body.deploymentUrl).toBe("https://pr-preview.vercel.app");
-    expect(body.failedDeploymentUrl).toBeUndefined();
+    expect(body.deploymentUrl).toBeNull();
     expect(
-      findLatestFailedDeploymentInspectorUrlForBranchMock,
-    ).toHaveBeenCalledTimes(0);
+      mockFindLatestVercelDeploymentUrlForPullRequest,
+    ).not.toHaveBeenCalled();
+  });
+
+  test("PR number mismatch between query param and session returns null", async () => {
+    const res = await GET(makeRequest(99), makeContext());
+    const body = await res.json();
+
+    expect(body.deploymentUrl).toBeNull();
+    expect(
+      mockFindLatestVercelDeploymentUrlForPullRequest,
+    ).not.toHaveBeenCalled();
   });
 });

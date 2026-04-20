@@ -23,7 +23,7 @@ let currentSession: {
 interface MockPreferences {
   defaultModelId: string;
   defaultSubagentModelId: string | null;
-  defaultSandboxType: "vercel";
+  defaultSandboxType: "srt";
   defaultDiffMode: "unified" | "split";
   modelVariants: ModelVariant[];
 }
@@ -34,7 +34,7 @@ function resetPreferences() {
   preferences = {
     defaultModelId: "anthropic/claude-haiku-4.5",
     defaultSubagentModelId: null,
-    defaultSandboxType: "vercel",
+    defaultSandboxType: "srt",
     defaultDiffMode: "unified",
     modelVariants: [],
   };

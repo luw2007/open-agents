@@ -45,10 +45,8 @@ globalThis.fetch = (async () =>
     headers: { "Content-Type": "application/json" },
   })) as unknown as typeof fetch;
 
-mock.module("workflow/api", () => ({
-  getRun: () => ({
-    cancel: spies.cancel,
-  }),
+mock.module("@/lib/workflow", () => ({
+  cancelJob: spies.cancel,
 }));
 
 mock.module("@/lib/session/get-server-session", () => ({

@@ -43,19 +43,17 @@ mock.module("ai", () => ({
     new Response(stream, { status: 200 }),
 }));
 
-mock.module("workflow/api", () => ({
-  getRun: () => {
+mock.module("@/lib/workflow", () => ({
+  getJobStatus: async () => {
     if (getRunShouldThrow) throw new Error("Run not found");
-    return {
-      status: Promise.resolve(workflowRunStatus),
-      getReadable: () =>
-        new ReadableStream({
-          start(controller) {
-            controller.close();
-          },
-        }),
-    };
+    return workflowRunStatus;
   },
+  subscribeJobStream: () =>
+    new ReadableStream({
+      start(controller) {
+        controller.close();
+      },
+    }),
 }));
 
 mock.module("@/lib/chat/create-cancelable-readable-stream", () => ({

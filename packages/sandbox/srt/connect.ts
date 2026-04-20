@@ -82,6 +82,11 @@ export async function connectSrt(
 ): Promise<Sandbox> {
   let currentBranch: string | undefined;
 
+  // 确保工作目录存在
+  if (!existsSync(state.workdir)) {
+    await mkdir(state.workdir, { recursive: true });
+  }
+
   // 如果有 source 且目录下没有 .git，执行克隆
   if (state.source && !existsSync(`${state.workdir}/.git`)) {
     currentBranch = await cloneRepo(state, options);

@@ -30,7 +30,7 @@ export interface UserPreferencesData {
 const DEFAULT_PREFERENCES: UserPreferencesData = {
   defaultModelId: APP_DEFAULT_MODEL_ID,
   defaultSubagentModelId: null,
-  defaultSandboxType: "vercel",
+  defaultSandboxType: "srt",
   defaultDiffMode: "unified",
   autoCommitPush: false,
   autoCreatePr: false,
@@ -42,22 +42,22 @@ const DEFAULT_PREFERENCES: UserPreferencesData = {
   enabledModelIds: [],
 };
 
-const VALID_SANDBOX_TYPES: SandboxType[] = ["vercel"];
+const VALID_SANDBOX_TYPES: SandboxType[] = ["srt"];
 const VALID_DIFF_MODES: DiffMode[] = ["unified", "split"];
 
-function normalizeSandboxType(value: unknown): SandboxType {
-  if (value === "hybrid") {
-    return "vercel";
+function normalizeSandboxType(value: unknown): "srt" {
+  if (value === "hybrid" || value === "vercel") {
+    return "srt";
   }
 
   if (
     typeof value === "string" &&
     VALID_SANDBOX_TYPES.includes(value as SandboxType)
   ) {
-    return value as SandboxType;
+    return value as "srt";
   }
 
-  return DEFAULT_PREFERENCES.defaultSandboxType;
+  return "srt";
 }
 
 function normalizeDiffMode(value: unknown): DiffMode {
@@ -146,10 +146,14 @@ export async function updateUserPreferences(
     .limit(1);
 
   if (existing) {
+    const { defaultSandboxType: rawSandboxType, ...rest } = updates;
     const [updated] = await db
       .update(userPreferences)
       .set({
-        ...updates,
+        ...rest,
+        defaultSandboxType: rawSandboxType
+          ? normalizeSandboxType(rawSandboxType)
+          : undefined,
         updatedAt: new Date(),
       })
       .where(eq(userPreferences.userId, userId))
@@ -167,8 +171,9 @@ export async function updateUserPreferences(
       defaultModelId:
         updates.defaultModelId ?? DEFAULT_PREFERENCES.defaultModelId,
       defaultSubagentModelId: updates.defaultSubagentModelId ?? null,
-      defaultSandboxType:
+      defaultSandboxType: normalizeSandboxType(
         updates.defaultSandboxType ?? DEFAULT_PREFERENCES.defaultSandboxType,
+      ),
       defaultDiffMode:
         updates.defaultDiffMode ?? DEFAULT_PREFERENCES.defaultDiffMode,
       autoCommitPush:

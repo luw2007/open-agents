@@ -19,6 +19,11 @@ export async function registerWorkers(): Promise<void> {
 
   const boss = await getBoss();
 
+  // pg-boss v10 需要先创建 queue 才能 send/work
+  for (const queue of Object.values(JOB_QUEUES)) {
+    await boss.createQueue(queue);
+  }
+
   // chat.agent — 主聊天工作流，batchSize=1 逐条处理
   await boss.work<ChatAgentJobData>(
     JOB_QUEUES.CHAT_AGENT,

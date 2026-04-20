@@ -133,13 +133,14 @@ export async function PUT(req: Request) {
   }
 
   const { sessionRecord } = sessionContext;
-  const sandboxType = sessionRecord.sandboxState?.type ?? "vercel";
+  const sandboxType = sessionRecord.sandboxState?.type ?? "srt";
 
-  if (sandboxType !== "vercel") {
+  // Snapshot restoration was only supported for the legacy Vercel cloud sandbox.
+  // The srt sandbox does not support cloud-based snapshot restore.
+  if (sandboxType === "srt") {
     return Response.json(
       {
-        error:
-          "Snapshot restoration is only supported for the current cloud sandbox provider",
+        error: "Snapshot restoration is not supported for local sandboxes",
       },
       { status: 400 },
     );
@@ -179,8 +180,7 @@ export async function PUT(req: Request) {
     connectSandbox(
       {
         type: sandboxType,
-        sandboxName: getSessionSandboxName(sessionId),
-        snapshotId: legacySnapshotId ?? undefined,
+        workdir: getSessionSandboxName(sessionId),
       },
       {
         timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
@@ -199,7 +199,7 @@ export async function PUT(req: Request) {
           try {
             restoredFrom = persistentSandboxName;
             return await connectSandbox(
-              { type: sandboxType, sandboxName: persistentSandboxName },
+              { type: sandboxType, workdir: persistentSandboxName },
               {
                 timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
                 ports: DEFAULT_SANDBOX_PORTS,
@@ -222,7 +222,7 @@ export async function PUT(req: Request) {
     const newState = sandbox.getState?.();
     const restoredState = (newState ?? {
       type: sandboxType,
-      sandboxName: persistentSandboxName ?? getSessionSandboxName(sessionId),
+      workdir: persistentSandboxName ?? getSessionSandboxName(sessionId),
     }) as Parameters<typeof updateSession>[1]["sandboxState"];
 
     await updateSession(sessionId, {

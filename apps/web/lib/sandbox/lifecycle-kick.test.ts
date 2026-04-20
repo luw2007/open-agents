@@ -24,7 +24,7 @@ let sessionRecord: TestSessionRecord | null = null;
 const scheduledCallbacks: Array<() => Promise<void>> = [];
 
 const spies = {
-  start: mock(async () => ({ runId: "workflow-run-1" })),
+  bossSend: mock(async () => "job-lifecycle-1"),
   claimSessionLifecycleRunId: mock(async (sessionId: string, runId: string) => {
     if (
       !sessionRecord ||
@@ -68,14 +68,14 @@ const spies = {
   canOperateOnSandbox: mock(() => true),
 };
 
-const sandboxLifecycleWorkflow = Symbol("sandboxLifecycleWorkflow");
-
-mock.module("workflow/api", () => ({
-  start: spies.start,
+mock.module("@/lib/workflow/boss", () => ({
+  getBoss: async () => ({
+    send: spies.bossSend,
+  }),
 }));
 
-mock.module("@/app/workflows/sandbox-lifecycle", () => ({
-  sandboxLifecycleWorkflow,
+mock.module("@/lib/workflow/types", () => ({
+  JOB_QUEUES: { SANDBOX_LIFECYCLE: "sandbox.lifecycle" },
 }));
 
 mock.module("@/lib/db/sessions", () => ({
@@ -148,21 +148,21 @@ describe("kickSandboxLifecycleWorkflow", () => {
     await Promise.all(scheduledCallbacks.map((callback) => callback()));
 
     expect(spies.claimSessionLifecycleRunId).toHaveBeenCalledTimes(2);
-    expect(spies.start).toHaveBeenCalledTimes(1);
+    expect(spies.bossSend).toHaveBeenCalledTimes(1);
     expect(spies.evaluateSandboxLifecycle).not.toHaveBeenCalled();
 
-    const startCalls = spies.start.mock.calls as unknown as Array<
-      [unknown, [string, string, string]]
+    const sendCalls = spies.bossSend.mock.calls as unknown as Array<
+      [string, Record<string, unknown>, Record<string, unknown>]
     >;
-    const startArgs = startCalls[0];
-    expect(startArgs?.[0]).toBe(sandboxLifecycleWorkflow);
-    expect(startArgs?.[1]?.[0]).toBe("session-1");
-    expect(startArgs?.[1]?.[1]).toBe("status-check-overdue");
+    const sendArgs = sendCalls[0];
+    expect(sendArgs?.[0]).toBe("sandbox.lifecycle");
+    expect(sendArgs?.[1]?.sessionId).toBe("session-1");
+    expect(sendArgs?.[1]?.reason).toBe("status-check-overdue");
     expect(sessionRecord?.lifecycleRunId).not.toBeNull();
   });
 
   test("releases the claimed lease and falls back inline when workflow start fails", async () => {
-    spies.start.mockImplementationOnce(async () => {
+    spies.bossSend.mockImplementationOnce(async () => {
       throw new Error("workflow start failed");
     });
 
@@ -180,7 +180,7 @@ describe("kickSandboxLifecycleWorkflow", () => {
 
     await scheduledCallbacks[0]?.();
 
-    expect(spies.start).toHaveBeenCalledTimes(1);
+    expect(spies.bossSend).toHaveBeenCalledTimes(1);
     expect(spies.evaluateSandboxLifecycle).toHaveBeenCalledTimes(1);
     expect(spies.updateSession).toHaveBeenCalledWith("session-1", {
       lifecycleRunId: null,

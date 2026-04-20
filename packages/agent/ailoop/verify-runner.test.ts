@@ -30,7 +30,7 @@ mock.module("@open-harness/sandbox", () => ({
 
 const { runVerify } = await import("./verify-runner");
 
-const testState = { type: "vercel" as const, sandboxName: "test-sbx" };
+const testState = { type: "srt" as const, workdir: "/tmp/test" };
 
 describe("runVerify", () => {
   test("单个命令全部通过", async () => {
